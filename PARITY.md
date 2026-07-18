@@ -24,6 +24,15 @@ The deterministic core reproduces MATLAB **exactly** on every fixture tile:
 | clean (merge + small/flat filters) | partition ARI | **1.0000** |
 | ellipsoid radii      | b-axis relative error | **1e-4** |
 | ellipsoid rotation   | row-matched Frobenius residual | **0.0** |
+| per-grain GSD (on MATLAB's partition) | D16/D50/D84 vs `granulo` | **sub-mm** |
+
+These are the DETERMINISTIC core: fixture-level PARTITION equivalence (ARI=1.0) plus grain
+geometry, with the denoise held identical. Stage internals that differ without changing the
+partition (the `ndon` self-count convention; the F5 `>=`/`>` sink edge on quantized input) are
+documented under "known divergences", not claimed identical.
+
+The **full class end-to-end** (Stage 5) additionally runs the port's own SOR denoise, so it is
+a TOLERANCE comparison, not bit-exact — see divergence #1 for the quantified result.
 
 Run `python tests/test_stage_parity.py` (set `G3_FIXTURE_DIR`) to regenerate.
 
@@ -67,10 +76,24 @@ robust-spread) algorithm in the same family, not just different parameters.
   tolerance), NOT bit-exact denoise. Rationale: denoise touches ~1–2% of points as outlier
   pre-filtering; most disputed points are absorbed into a grain or removed by the downstream
   small/flat filters anyway. This is an *empirical* claim to be verified, not assumed.
-- **How to report it:** METHODS must state the port uses SOR and is ~99% concordant with
-  MATLAB `pcdenoise` — it must **not** claim to replicate `pcdenoise`.
-- **Status:** decision approved; implementation pending (SOR stage + concordance report vs
-  fixture inliers + the Phase-4 GSD-tolerance gate).
+- **Retained- vs removed-set concordance.** Retained-set Jaccard (~0.99) is misleading — it
+  is dominated by the many points both keep. The discriminating **removed-set Jaccard is
+  0.21–0.84** across fixtures (e.g. 041: SOR removes 52, MATLAB 11 → 0.21). Both are reported
+  by the harness (Stage 0a).
+- **QUANTIFIED downstream effect (end-to-end vs MATLAB `granulo`, Stage 5).** With the refactor
+  correct (feeding MATLAB's exact partition reproduces `granulo` to sub-mm), the SOR-vs-
+  pcdenoise difference moves the GSD as follows: tiles 040/041/047 match to **≤9 mm on
+  D16/D50/D84** (incl. the 218-grain tile 047: dD84 = +1 mm), BUT the smallest tile 043 (29
+  grains) misses **dD84 = −93 mm** because the different denoise dropped one large grain.
+  So the divergence is negligible at aggregate/reach scale but introduces **coarse-tail
+  sensitivity on small samples** — cell-level D84 on sparse spatial cells can be affected.
+  Aggregate D-tolerance alone is insufficient; grain counts, fit failures, and held-out tiles
+  must be checked (the current k=4,t=2.5 was tuned on these fixtures).
+- **How to report it:** METHODS must state the port uses SOR and is ~99% (retained) / 0.2–0.8
+  (removed) concordant with MATLAB `pcdenoise` — it must **not** claim to replicate it.
+- **Status:** implemented (`denoise.py`, wired into `G3Point.run`). Open: held-out validation
+  and a decision on whether the small-sample coarse-tail sensitivity is acceptable for the
+  spatial GSD mapping, or whether `pcdenoise` must be ported exactly.
 
 ### 2. Acover / Aqualityok fit-quality test — stochastic
 `Acover` samples 200 random points on each fitted ellipsoid's surface, so the per-grain value
@@ -103,11 +126,25 @@ Checked by `check_normals` in the stage-parity harness (Stage 0).
 
 ---
 
-## Open items (Phase 1 remaining)
-- Wire `Acover` into the primary API; return a typed per-grain table (count, original-frame
-  centroid, sorted radii, R, fitok, fail-reason, Acover, Aqualityok, point indices) and derive
-  the GSD from it.
-- Coordinate frames (F2d): keep original / denoised-original / detrended-routing separate; use
-  each at the same stage as MATLAB; export labels on ORIGINAL coordinates (the class currently
-  overwrites `self.xyz` with detrended coords and fits ellipsoids on them).
-- Implement + parameterise the denoise stage (divergence #1) and the Phase-4 GSD gate.
+## G3Point class refactor (done 2026-07-18, post-codex review)
+- **Frames (F2d):** the class no longer overwrites `self.xyz` with detrended coords. Neighbours,
+  surface, normals, cluster, clean, and ellipsoid fit run on the analysis frame; a detrended
+  COPY is used only for segmentation. Export is in the loaded/scan frame.
+- **Canonical `run(version='matlab_dbscan')`** using the verified merge mode and honouring
+  `params.clean` (the `cluster`/`clean` method defaults stay `cpp` for back-compat).
+- **Typed per-grain table** (`grains.py`, `GrainResult`): separate `point_centroid` and fitted
+  `ellipsoid_center` (MATLAB `centers` = the fitted centre, compare to that), source-point
+  index mapping preserved through invalid-point removal + denoise, Optional fields for failed
+  fits with verified `fail_reason` (`too_few_points` / `fit_not_positive_definite`).
+- **GSD** filters on `fitok & aqualityok` ONLY — no `min_diam` cut (matches
+  `grainsizedistribution.m`; `min_diam` belongs to the grid-by-number workflow).
+- **Acover RNG** is a deterministic per-grain stream keyed on the grain's source-point indexes
+  (stable under reordering), not one shared generator.
+- **Config contract:** `fit_method` threaded through; enabled-but-unimplemented `decimate` /
+  `minima` raise `NotImplementedError` instead of silently no-op'ing.
+
+## Open items
+- Held-out-tile validation of the denoise (params were tuned on the current fixtures), and the
+  decision on the small-sample coarse-tail sensitivity (divergence #1) — port `pcdenoise`
+  exactly, or accept SOR for reach-scale GSD.
+- Packaging/tests/CI (Phase 2); scale work (Phase 3).

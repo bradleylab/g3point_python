@@ -109,19 +109,15 @@ def check_segmentation(fx) -> dict:
     labels_py, stacks_py, ndon_py, locmax_py = segment(xyz_detrended, knn, neigh0)
 
     ari = adjusted_rand_score(labels_ml, labels_py)
-    # ndon is base-agnostic (a count per point); compare exactly
+    # ndon differs by convention (braun_willett self-counts at local maxima) without changing
+    # the partition; report the exact-match flag but do not treat it as a failure.
     ndon_ml = fx["ndon"].astype(int)
     ndon_match = bool(np.array_equal(ndon_py.astype(int), ndon_ml))
-    # sinks: MATLAB isink (per label) vs port local maxima seeds
-    sink_ml = set((fx["isink"].astype(int) - 1).tolist())
-    sink_py = set(np.asarray(locmax_py).astype(int).tolist())
+    # NB: the fixture's `isink` is the POST-CLEAN sink array (the exporter overwrote it), so it
+    # is NOT comparable to the port's segmentation seeds -- a sink metric here is meaningless.
     return {"stage": "segment", "ari": ari,
             "n_ml": int(fx["meta"].nlabels_seg), "n_py": len(stacks_py),
-            "ndon_exact": ndon_match, "sink_jaccard": _jaccard(sink_ml, sink_py)}
-
-
-def _jaccard(a: set, b: set) -> float:
-    return len(a & b) / len(a | b) if (a or b) else 1.0
+            "ndon_exact": ndon_match}
 
 
 # --------------------------------------------------------------------------- #
@@ -245,6 +241,49 @@ def check_ellipsoids(fx) -> dict:
             "aqualityok_agree": float(np.mean(aq_agree)) if aq_agree else np.nan}
 
 
+# --------------------------------------------------------------------------- #
+# Stage 5 — full class end-to-end: GSD vs MATLAB granulo (denoise included -> tolerance test)
+# --------------------------------------------------------------------------- #
+_INI_KEYS = [
+    ("iplot", 0), ("saveplot", 0), ("grid_by_number", 0), ("save_granulo", 0),
+    ("save_grain", 0), ("dx_gbn", 0),
+]
+
+
+def _synth_ini(param, path):
+    p = param
+    vals = dict(_INI_KEYS)
+    vals.update(dict(
+        denoise=int(p.denoise), decimate=int(p.decimate), minima=int(p.minima),
+        rot_detrend=int(p.rotdetrend), clean=int(p.clean), res=float(p.res),
+        n_scale=int(p.nscale), min_scale=float(p.minscale), max_scale=float(p.maxscale),
+        knn=int(p.nnptCloud), rad_factor=float(p.radfactor), max_angle1=float(p.maxangle1),
+        max_angle2=float(p.maxangle2), min_flatness=float(p.minflatness), n_min=int(p.minnpoint),
+        fit_method=str(p.fitmethod), a_quality_thresh=float(p.Aquality_thresh),
+        min_diam=float(p.mindiam), n_axis=int(p.naxis)))
+    with open(path, "w") as fh:
+        fh.write("[DEFAULT]\n" + "\n".join(f"{k} = {v}" for k, v in vals.items()) + "\n")
+
+
+def check_end_to_end(fx, tmpdir) -> dict | None:
+    import os
+    from g3point import G3Point
+    p = fx["meta"].param
+    tile = os.path.join(str(p.ptCloudpathname), str(p.ptCloudname))
+    if not os.path.exists(tile):
+        return None  # tile PLY not available locally
+    ini = os.path.join(tmpdir, "params.ini")
+    _synth_ini(p, ini)
+    g = G3Point(tile, ini, remove_mins=True)
+    g.run(version="matlab_dbscan")
+    gsd = g.grain_size_distribution()
+    bml = np.atleast_2d(fx["granulo"].diameter)[1, :]  # MATLAB b-axis (median-diameter row)
+    out = {"n_py": len(gsd), "n_ml": bml.size}
+    for q in (16, 50, 84):
+        out[f"d{q}"] = float(np.percentile(gsd, q) - np.percentile(bml, q))
+    return out
+
+
 def _rot_dist(Ra: np.ndarray, Rb: np.ndarray) -> float:
     """Orientation distance between two rotation matrices whose ROWS are the ellipsoid
     axis directions (R = evecs', per ellipsoid_im2ex.m). Invariant to axis order and to
@@ -267,11 +306,12 @@ def main():
     print(f"fixtures: {FIXTURE_DIR}  ({len(fixtures)} tiles)\n")
 
     print("== Stage 0a: denoise concordance (SOR vs MATLAB pcdenoise inliers) ==")
-    print(f"{'tile':<22} {'Jaccard':>8} {'SORrem':>7} {'MLrem':>7}")
+    print(f"{'tile':<22} {'keptJ':>7} {'remJ':>6} {'SORrem':>7} {'MLrem':>7}")
     for f in fixtures:
         fx = load_fixture(f)
         r = check_denoise(fx)
-        print(f"{fx['meta'].tile:<22} {r['jaccard']:>8.4f} {r['sor_removed']:>7} {r['matlab_removed']:>7}")
+        print(f"{fx['meta'].tile:<22} {r['jaccard']:>7.4f} {r['removed_jaccard']:>6.3f} "
+              f"{r['sor_removed']:>7} {r['matlab_removed']:>7}")
 
     print("\n== Stage 0: normals (Open3D vs MATLAB pcnormals) ==")
     print(f"{'tile':<22} {'median°':>8} {'p99°':>7} {'>5°frac':>8}")
@@ -280,21 +320,24 @@ def main():
         r = check_normals(fx)
         print(f"{fx['meta'].tile:<22} {r['median_deg']:>8.4f} {r['p99_deg']:>7.3f} {r['frac_gt5deg']:>8.4f}")
 
-    print("\n== Stage 1: initial segmentation (F5) ==")
-    print(f"{'tile':<22} {'ARI':>7} {'n_ml':>5} {'n_py':>5} {'ndon=':>6} {'sinkJ':>6}")
+    print("\n== Stage 1: initial segmentation (partition; F5 no-op on float) ==")
+    print(f"{'tile':<22} {'ARI':>7} {'n_ml':>5} {'n_py':>5} {'ndon=':>6}")
     for f in fixtures:
         fx = load_fixture(f)
         r = check_segmentation(fx)
         print(f"{fx['meta'].tile:<22} {r['ari']:>7.4f} {r['n_ml']:>5} {r['n_py']:>5} "
-              f"{str(r['ndon_exact']):>6} {r['sink_jaccard']:>6.3f}")
+              f"{str(r['ndon_exact']):>6}")
 
-    print("\n== Stage 2A: DBSCAN merge on MATLAB Mmerge (direct vs transpose) ==")
-    print(f"{'tile':<22} {'stage':<14} {'ARIdirect':>9} {'ARItrans':>9} {'n_ml':>5}")
+    # merge_labels_dbscan now transposes Mmerge internally, so the PRODUCTION call (natural
+    # condition) reproduces MATLAB (ARI=1.0); passing an already-transposed condition
+    # double-transposes back to the wrong direction (the pre-fix behaviour), shown for contrast.
+    print("\n== Stage 2A: DBSCAN merge on MATLAB Mmerge (production vs double-transpose) ==")
+    print(f"{'tile':<22} {'stage':<14} {'ARIprod':>8} {'ARI2xT':>7} {'n_ml':>5}")
     for f in fixtures:
         fx = load_fixture(f)
         for r in check_dbscan_matrix(fx):
-            print(f"{fx['meta'].tile:<22} {r['stage']:<14} {r['ari_direct']:>9.4f} "
-                  f"{r['ari_transpose']:>9.4f} {r['n_ml']:>5}")
+            print(f"{fx['meta'].tile:<22} {r['stage']:<14} {r['ari_direct']:>8.4f} "
+                  f"{r['ari_transpose']:>7.4f} {r['n_ml']:>5}")
 
     print("\n== Stage 2B/3B: full cluster / clean stage (DBSCAN transpose, F1, F2b) ==")
     print(f"{'tile':<22} {'stage':<8} {'ARI':>7} {'n_ml':>5} {'n_py':>5}  {'note':<20}")
@@ -316,6 +359,19 @@ def main():
         print(f"{fx['meta'].tile:<22} {str(r['n_fit'])+'/'+str(r['n_ml']):>9} "
               f"{r['baxis_relerr_med']:>8.4f} {r['R_frobenius_med']:>7.4f} "
               f"{r['acover_absdiff_med']:>7.2f} {r['aqualityok_agree']:>6.3f}")
+
+    print("\n== Stage 5: full class end-to-end GSD vs MATLAB granulo (denoise INCLUDED) ==")
+    print(f"{'tile':<22} {'n_py':>5} {'n_ml':>5} {'dD16':>7} {'dD50':>7} {'dD84':>7}  (metres)")
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        for f in fixtures:
+            fx = load_fixture(f)
+            r = check_end_to_end(fx, td)
+            if r is None:
+                print(f"{fx['meta'].tile:<22}   (tile PLY not available locally)")
+                continue
+            print(f"{fx['meta'].tile:<22} {r['n_py']:>5} {r['n_ml']:>5} "
+                  f"{r['d16']:>+7.3f} {r['d50']:>+7.3f} {r['d84']:>+7.3f}")
 
 
 if __name__ == "__main__":

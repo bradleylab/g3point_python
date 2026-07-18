@@ -19,6 +19,19 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
+def grain_rng(run_seed: int, source_point_indexes) -> np.random.Generator:
+    """A deterministic per-grain RNG stream, stable under grain reordering.
+
+    Acover is stochastic; a single shared generator would make every grain's Acover depend on
+    how many grains (and failed fits) preceded it, so results would shift under reordering or
+    parallelisation. Instead seed each grain independently from ``(run_seed, grain_key)`` where
+    the key is the grain's smallest source-point index -- unique across grains (their point sets
+    are disjoint) and independent of iteration order.
+    """
+    key = int(np.min(source_point_indexes))
+    return np.random.default_rng([int(run_seed), key])
+
+
 def sample_ellipsoid_surface(center, radii, rotation_matrix, n=200, rng=None):
     """`n` random points on an ellipsoid surface -- port of randsamplingellipsoid.m.
 

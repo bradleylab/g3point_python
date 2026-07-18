@@ -70,8 +70,15 @@ def denoise_concordance(xyz: np.ndarray, matlab_inlier_indexes: np.ndarray,
     Returns the Jaccard overlap of the two kept sets plus both removal counts -- the quantity
     tracked in PARITY.md divergence #1.
     """
+    n = len(xyz)
+    all_idx = set(range(n))
     _, kept = statistical_outlier_removal(xyz, n_neighbors, std_ratio)
     a, b = set(kept.tolist()), set(np.asarray(matlab_inlier_indexes).tolist())
+    ra, rb = all_idx - a, all_idx - b  # removed sets
+    # removed-set Jaccard is the discriminating metric: retained-set Jaccard is dominated by
+    # the many points both methods keep and looks deceptively high.
+    removed_jacc = len(ra & rb) / len(ra | rb) if (ra or rb) else 1.0
     return {"jaccard": len(a & b) / len(a | b),
-            "sor_removed": len(xyz) - len(a),
-            "matlab_removed": len(xyz) - len(b)}
+            "removed_jaccard": removed_jacc,
+            "sor_removed": n - len(a),
+            "matlab_removed": n - len(b)}
