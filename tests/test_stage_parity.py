@@ -66,6 +66,26 @@ def stacks_from_labels(labels0: np.ndarray, nlabels: int) -> list[list[int]]:
 
 
 # --------------------------------------------------------------------------- #
+# Stage 0 — normals (port Open3D pcnormals vs MATLAB pcnormals)
+# --------------------------------------------------------------------------- #
+def check_normals(fx) -> dict:
+    import open3d as o3d
+    from g3point.detrend import orient_normals
+    xyz = fx["xyz_denoised"].astype(float)
+    knn = int(fx["meta"].param.nnptCloud)
+    n_ml = fx["normals"].astype(float)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(xyz)
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamKNN(knn))
+    c = np.mean(xyz, axis=0)
+    n_py = orient_normals(xyz, np.asarray(pcd.normals), np.array([c[0], c[1], 1000.0]))
+    dots = np.clip(np.sum(n_py * n_ml, axis=1), -1, 1)
+    ang = np.degrees(np.arccos(np.abs(dots)))  # |dot|: normals share orientation, allow sign
+    return {"stage": "normals", "median_deg": float(np.median(ang)),
+            "p99_deg": float(np.percentile(ang, 99)), "frac_gt5deg": float(np.mean(ang > 5))}
+
+
+# --------------------------------------------------------------------------- #
 # Stage 1 — initial segmentation (tests F5: sink test >= vs MATLAB >)
 # --------------------------------------------------------------------------- #
 def check_segmentation(fx) -> dict:
@@ -234,7 +254,14 @@ def main():
         raise SystemExit(f"no fixtures in {FIXTURE_DIR}")
     print(f"fixtures: {FIXTURE_DIR}  ({len(fixtures)} tiles)\n")
 
-    print("== Stage 1: initial segmentation (F5) ==")
+    print("== Stage 0: normals (Open3D vs MATLAB pcnormals) ==")
+    print(f"{'tile':<22} {'median°':>8} {'p99°':>7} {'>5°frac':>8}")
+    for f in fixtures:
+        fx = load_fixture(f)
+        r = check_normals(fx)
+        print(f"{fx['meta'].tile:<22} {r['median_deg']:>8.4f} {r['p99_deg']:>7.3f} {r['frac_gt5deg']:>8.4f}")
+
+    print("\n== Stage 1: initial segmentation (F5) ==")
     print(f"{'tile':<22} {'ARI':>7} {'n_ml':>5} {'n_py':>5} {'ndon=':>6} {'sinkJ':>6}")
     for f in fixtures:
         fx = load_fixture(f)

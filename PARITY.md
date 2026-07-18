@@ -93,12 +93,13 @@ does not. This feeds the `ndon == 0` border test in the merge stages. It did **n
 cluster/clean parity on the fixtures (ARI = 1.0), but the two conventions are not identical;
 verify before relying on `ndon` in any new code path.
 
-### 5. Normals (`pcnormals` MATLAB vs Open3D) — NOT YET VERIFIED
-The stage-parity tests fed MATLAB's normals into the merge stages to isolate them, so the
-cluster/clean equivalence above is **conditional on matching normals**. The port estimates
-normals with Open3D; agreement with MATLAB `pcnormals` has not yet been checked against a
-fixture. This is an open item — a normal-orientation difference would propagate into the
-border-angle merge. **Do not assume normals match until verified.**
+### 5. Normals (`pcnormals` MATLAB vs Open3D) — VERIFIED, effectively identical
+The port's Open3D `estimate_normals` (KNN = `nnptCloud`) + `orient_normals` reproduces MATLAB
+`pcnormals` + `adjustnormals3d` to **median 0.000°, p99 0.04°, max 0.06°** on three tiles;
+on the largest tile a single point out of ~35k reached 12.7° (a degenerate/tie PCA
+neighbourhood), with 0.0% of points above 5°. So the cluster/clean equivalence above is **not**
+in fact conditional on fed-in normals — the port's own normals give the same partition.
+Checked by `check_normals` in the stage-parity harness (Stage 0).
 
 ---
 
@@ -109,5 +110,4 @@ border-angle merge. **Do not assume normals match until verified.**
 - Coordinate frames (F2d): keep original / denoised-original / detrended-routing separate; use
   each at the same stage as MATLAB; export labels on ORIGINAL coordinates (the class currently
   overwrites `self.xyz` with detrended coords and fits ellipsoids on them).
-- Verify normals parity (divergence #5) against a fixture.
 - Implement + parameterise the denoise stage (divergence #1) and the Phase-4 GSD gate.
