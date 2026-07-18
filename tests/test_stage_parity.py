@@ -66,6 +66,18 @@ def stacks_from_labels(labels0: np.ndarray, nlabels: int) -> list[list[int]]:
 
 
 # --------------------------------------------------------------------------- #
+# Stage 0a — denoise concordance (port SOR vs MATLAB pcdenoise inliers)
+# --------------------------------------------------------------------------- #
+def check_denoise(fx) -> dict:
+    from g3point.denoise import denoise_concordance
+    xyz = fx["xyz_loaded"].astype(float)
+    inliers0 = fx["inlierIdx"].astype(int) - 1  # 1-based -> 0-based into loaded
+    r = denoise_concordance(xyz, inliers0)
+    r["stage"] = "denoise"
+    return r
+
+
+# --------------------------------------------------------------------------- #
 # Stage 0 — normals (port Open3D pcnormals vs MATLAB pcnormals)
 # --------------------------------------------------------------------------- #
 def check_normals(fx) -> dict:
@@ -254,7 +266,14 @@ def main():
         raise SystemExit(f"no fixtures in {FIXTURE_DIR}")
     print(f"fixtures: {FIXTURE_DIR}  ({len(fixtures)} tiles)\n")
 
-    print("== Stage 0: normals (Open3D vs MATLAB pcnormals) ==")
+    print("== Stage 0a: denoise concordance (SOR vs MATLAB pcdenoise inliers) ==")
+    print(f"{'tile':<22} {'Jaccard':>8} {'SORrem':>7} {'MLrem':>7}")
+    for f in fixtures:
+        fx = load_fixture(f)
+        r = check_denoise(fx)
+        print(f"{fx['meta'].tile:<22} {r['jaccard']:>8.4f} {r['sor_removed']:>7} {r['matlab_removed']:>7}")
+
+    print("\n== Stage 0: normals (Open3D vs MATLAB pcnormals) ==")
     print(f"{'tile':<22} {'median°':>8} {'p99°':>7} {'>5°frac':>8}")
     for f in fixtures:
         fx = load_fixture(f)
