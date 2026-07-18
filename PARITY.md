@@ -126,6 +126,12 @@ Checked by `check_normals` in the stage-parity harness (Stage 0).
 
 ---
 
+### 6. Load order: invalid-point removal before min-shift — deliberate, safer divergence
+MATLAB `loadptCloud` min-shifts then removes invalid points; the port removes non-finite points
+FIRST, then min-shifts, so a stray `inf`/`NaN` coordinate cannot poison the per-axis minimum.
+This only differs for clouds that contain non-finite coordinates (none in the fixtures). A
+signed-normal orientation test across both `remove_mins` settings is still owed.
+
 ## G3Point class refactor (done 2026-07-18, post-codex review)
 - **Frames (F2d):** the class no longer overwrites `self.xyz` with detrended coords. Neighbours,
   surface, normals, cluster, clean, and ellipsoid fit run on the analysis frame; a detrended
