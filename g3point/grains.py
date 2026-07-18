@@ -80,8 +80,21 @@ def compute_grains(xyz: np.ndarray, stacks, source_indexes: np.ndarray,
         if len(stack) < MIN_POINTS_FOR_FIT:
             grains.append(GrainResult(fitok=False, fail_reason="too_few_points", **base))
             continue
+        # A zero-extent / non-finite grain makes the fit's internal 1/max(extent) blow up to
+        # inf/NaN; treat it as a failed grain rather than letting it abort the whole tile
+        # (MATLAB catches per-grain fit errors and continues).
+        extent = pts.max(axis=0) - pts.min(axis=0)
+        if not np.all(np.isfinite(pts)) or np.max(extent) == 0:
+            grains.append(GrainResult(fitok=False, fail_reason="degenerate_input", **base))
+            continue
 
-        center, radii, _quat, rotation, _params = fit_ellipsoid_to_grain(pts, method=fit_method)
+        try:
+            center, radii, _quat, rotation, _params = fit_ellipsoid_to_grain(pts, method=fit_method)
+        except (np.linalg.LinAlgError, ValueError, FloatingPointError):
+            # A verified numerical fit failure -> a typed failed grain, not a crash. (A config
+            # error like an unsupported fit_method is validated earlier and never reaches here.)
+            grains.append(GrainResult(fitok=False, fail_reason="fit_error", **base))
+            continue
         if center is None or radii is None or rotation is None:
             grains.append(GrainResult(fitok=False, fail_reason="fit_not_positive_definite", **base))
             continue

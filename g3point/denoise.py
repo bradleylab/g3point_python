@@ -8,11 +8,14 @@ robust-spread) algorithm in the same family, not merely different parameters. Se
 divergence #1.
 
 This module therefore provides an explicit, documented standard SOR rather than trying to
-replicate `pcdenoise`. It is ~99% concordant with MATLAB's inliers; the residual disagreement
-is confined to borderline points near the outlier threshold. The Python port's equivalence to
-MATLAB is certified at the grain-size-distribution level (not at bit-exact denoise) -- see the
-Phase-4 acceptance gate. `denoise_concordance` supports auditing that ~99% against a MATLAB
-fixture inlier set.
+replicate `pcdenoise`. On the CALIBRATION fixtures it is ~0.99 concordant with MATLAB's inliers
+on the RETAINED set but only 0.21-0.84 on the REMOVED set (the discriminating metric), and the
+downstream effect is not uniformly negligible: 3 of 4 fixture tiles match the grain-size
+distribution to <=9 mm on D16/D50/D84, but the smallest tile misses D84 by 93 mm because the
+different denoise dropped one large grain (PARITY.md divergence #1). Equivalence is therefore
+NOT certified: the parameters were tuned on these fixtures, and a predeclared held-out,
+assertion-bearing GSD gate is still owed. `denoise_concordance` reports both retained- and
+removed-set agreement against a MATLAB fixture inlier set.
 """
 from __future__ import annotations
 

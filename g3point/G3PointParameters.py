@@ -31,3 +31,7 @@ class G3PointParameters:
         self.n_axis = params.getint('n_axis')
         self.n_min = params.getint('n_min')
         self.dx_gbn = params.getfloat('dx_gbn')
+        # Denoise SOR parameters (optional in the .ini; defaults are the fixture-tuned values).
+        # SOR is a documented approximation of MATLAB pcdenoise -- see PARITY.md divergence #1.
+        self.denoise_n_neighbors = params.getint('denoise_n_neighbors', fallback=4)
+        self.denoise_std_ratio = params.getfloat('denoise_std_ratio', fallback=2.5)

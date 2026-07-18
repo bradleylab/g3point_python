@@ -374,5 +374,87 @@ def main():
                   f"{r['d16']:>+7.3f} {r['d50']:>+7.3f} {r['d84']:>+7.3f}")
 
 
+# --------------------------------------------------------------------------- #
+# pytest gates — the printed tables above are a diagnostic report; these ASSERT with
+# predeclared tolerances so a numerical regression fails CI (not just prints a worse number).
+# --------------------------------------------------------------------------- #
+try:
+    import pytest
+except ImportError:  # allow the script to run standalone without pytest installed
+    pytest = None
+
+_FIXTURES = sorted(FIXTURE_DIR.glob("*_fixture.mat"))
+_IDS = [f.stem.replace("_fixture", "") for f in _FIXTURES]
+_ALLOW_MISSING_TILES = os.environ.get("G3_ALLOW_MISSING_TILES") == "1"
+
+if pytest is not None:
+    if not _FIXTURES:
+        pytest.skip(f"no MATLAB fixtures in {FIXTURE_DIR}", allow_module_level=True)
+
+    @pytest.fixture(params=_FIXTURES, ids=_IDS)
+    def fx(request):
+        return load_fixture(request.param)
+
+    def test_normals_parity(fx):
+        assert check_normals(fx)["p99_deg"] < 0.1
+
+    def test_segmentation_partition(fx):
+        assert check_segmentation(fx)["ari"] >= 0.9999
+
+    def test_cluster_partition(fx):
+        assert check_cluster_stage(fx, params_from_meta(fx["meta"]))["ari"] >= 0.9999
+
+    def test_clean_partition(fx):
+        assert check_clean_stage(fx, params_from_meta(fx["meta"]))["ari"] >= 0.9999
+
+    def test_ellipsoid_geometry(fx):
+        r = check_ellipsoids(fx)
+        assert r["R_frobenius_med"] < 1e-4      # rotation matches MATLAB (F2a bug was 0.3-0.5)
+        assert r["baxis_relerr_med"] < 1e-3     # b-axis radius matches
+
+    def test_grains_on_matlab_partition(fx):
+        """Tight deterministic gate: the port's GSD on MATLAB's exact clean partition must
+        reproduce MATLAB's granulo (isolates the grain/GSD code from the denoise divergence)."""
+        from g3point import compute_grains, grain_size_distribution
+        xyz = fx["xyz_denoised"].astype(float)
+        lc = np.nan_to_num(fx["labels_clean"], nan=0).astype(int)
+        nlab = int(fx["meta"].nlabels_clean)
+        stacks = [np.where(lc == (k + 1))[0] for k in range(nlab)]
+        gsd = grain_size_distribution(
+            compute_grains(xyz, stacks, np.arange(len(xyz)), run_seed=PARITY_SEED))
+        bml = np.atleast_2d(fx["granulo"].diameter)[1, :]
+        # 5 mm tolerance: the geometry is deterministic to <1 mm, but the fitok&aqualityok
+        # membership depends on the STOCHASTIC Acover test (port's seeded RNG vs MATLAB's), so a
+        # threshold-straddling grain can flip and shift a percentile a few mm. Still far below
+        # the tens-of-mm error the pre-fix pipeline produced.
+        for q in (16, 50, 84):
+            assert abs(np.percentile(gsd, q) - np.percentile(bml, q)) < 5e-3
+
+    def test_run_is_repeatable(fx, tmp_path):
+        """run() twice on the same object must give an identical GSD (SOR-idempotency guard)."""
+        import os as _os
+        from g3point import G3Point
+        p = fx["meta"].param
+        tile = _os.path.join(str(p.ptCloudpathname), str(p.ptCloudname))
+        if not _os.path.exists(tile):
+            if _ALLOW_MISSING_TILES:
+                pytest.skip("tile PLY not available (G3_ALLOW_MISSING_TILES=1)")
+            pytest.fail(f"tile PLY missing: {tile} (set G3_ALLOW_MISSING_TILES=1 to skip)")
+        ini = str(tmp_path / "p.ini")
+        _synth_ini(p, ini)
+        g = G3Point(tile, ini, remove_mins=True)
+        gsd1 = np.sort(g.run(version="matlab_dbscan") and g.grain_size_distribution())
+        gsd2 = np.sort(g.run(version="matlab_dbscan") and g.grain_size_distribution())
+        assert gsd1.shape == gsd2.shape and np.allclose(gsd1, gsd2)
+
+    def test_degenerate_grain_does_not_abort():
+        """A zero-extent grain becomes a failed result, not an exception."""
+        from g3point import compute_grains
+        xyz = np.zeros((10, 3))                       # all identical -> zero extent
+        grains = compute_grains(xyz, [np.arange(10)], np.arange(10))
+        assert len(grains) == 1 and grains[0].fitok is False
+        assert grains[0].fail_reason == "degenerate_input"
+
+
 if __name__ == "__main__":
     main()

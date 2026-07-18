@@ -14,9 +14,12 @@ from .grains import compute_grains, grain_size_distribution
 from .segment import segment_labels
 from .tools import load_data, save_data_with_colors
 
-# Sensor height used to orient normals toward the scanner (matches MATLAB adjustnormals3d).
+# Sensor height (above the cloud floor) used to orient normals toward the scanner, matching
+# MATLAB adjustnormals3d which places the sensor 10000 above the min-shifted cloud.
 SENSOR_HEIGHT = 10000.0
 UNLABELLED = -1
+SUPPORTED_FIT_METHODS = {"direct", "inertia"}
+ACOVER_N_SAMPLES = 200  # ellipsoid-surface samples per grain (quality.acover default)
 
 
 def generate_distinct_colors(n):
@@ -59,6 +62,12 @@ class G3Point:
             raise NotImplementedError(
                 "minima resampling is enabled in the .ini but not implemented in the port; "
                 "disable it.")
+        # Validate the fit method at load: MATLAB accepts more methods than the port implements,
+        # so catch an unsupported choice here rather than aborting on the first grain.
+        if self.params.fit_method not in SUPPORTED_FIT_METHODS:
+            raise ValueError(
+                f"fit_method '{self.params.fit_method}' is not implemented in the port; "
+                f"supported: {sorted(SUPPORTED_FIT_METHODS)}")
 
         # Load (scaled coordinates) and remove invalid (non-finite) points, tracking the map
         # back to rows in the loaded file.
@@ -76,6 +85,11 @@ class G3Point:
         else:
             self.mins = np.zeros(3)
         self.xyz = xyz  # analysis frame; NEVER overwritten with detrended coords
+
+        # Immutable post-load / pre-denoise state, so run()/denoise() are repeatable and cannot
+        # denoise an already-denoised cloud (SOR is not idempotent).
+        self._xyz0 = xyz.copy()
+        self._source_indexes0 = self.source_indexes.copy()
 
         # Set during initial_segmentation
         self.xyz_detrended = None
@@ -95,17 +109,31 @@ class G3Point:
         # Grain fitting
         self.grains = None
         self.g3point_results = None
+        self.provenance = None  # run-level provenance (denoise + RNG), set by compute_grains
 
     # --- pipeline ---------------------------------------------------------------------------
+    def _invalidate_grains(self):
+        """Any change to labels/stacks invalidates the cached grain results."""
+        self.grains = None
+        self.g3point_results = None
+
     def denoise(self):
         """Statistical-outlier-removal denoise (gated by params.denoise), keeping the source map.
 
-        NOTE: this is a documented approximation of MATLAB `pcdenoise`, not a bit-exact replica
-        (see PARITY.md divergence #1).
+        Always runs from the immutable pre-denoise state, so it is idempotent (SOR itself is
+        not) and resets any downstream results. This is a documented approximation of MATLAB
+        `pcdenoise`, not a bit-exact replica (see PARITY.md divergence #1).
         """
+        # Reset to the pristine post-load cloud + source map, and clear stale downstream state.
+        self.xyz = self._xyz0.copy()
+        self.source_indexes = self._source_indexes0.copy()
+        self.neighbors_indexes = self.surface = self.normals = None
+        self.labels = self.stacks = self.sink_indexes = None
+        self._invalidate_grains()
         if not getattr(self.params, "denoise", 0):
             return
-        kept_xyz, kept = statistical_outlier_removal(self.xyz)
+        kept_xyz, kept = statistical_outlier_removal(
+            self.xyz, self.params.denoise_n_neighbors, self.params.denoise_std_ratio)
         self.xyz = kept_xyz
         self.source_indexes = self.source_indexes[kept]  # preserve the map to the loaded file
 
@@ -121,8 +149,11 @@ class G3Point:
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(self.xyz)
         pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamKNN(self.params.knn))
+        # Sensor SENSOR_HEIGHT above the cloud floor (works whether or not the cloud is
+        # min-shifted; MATLAB places it 10000 above the min-shifted cloud).
         centroid = np.mean(self.xyz, axis=0)
-        sensor_center = np.array([centroid[0], centroid[1], SENSOR_HEIGHT])
+        sensor_z = np.amin(self.xyz[:, 2]) + SENSOR_HEIGHT
+        sensor_center = np.array([centroid[0], centroid[1], sensor_z])
         self.normals = orient_normals(self.xyz, np.asarray(pcd.normals), sensor_center)
 
         # Detrended COPY, used only as the coordinate argument to segmentation.
@@ -145,6 +176,7 @@ class G3Point:
         self.labels = np.copy(self.initial_labels)
         self.stacks = self.initial_stacks.copy()
         self.sink_indexes = np.copy(self.initial_sink_indexes)
+        self._invalidate_grains()
 
     def cluster(self, version="cpp", condition_flag=None):
         """version: 'matlab_dbscan' (verified MATLAB-parity path) | 'matlab' | 'cpp' | 'custom'."""
@@ -152,12 +184,14 @@ class G3Point:
                       self.initial_stacks, self.ndon, self.initial_sink_indexes, self.surface,
                       self.normals, version=version, condition_flag=condition_flag)
         self.labels, self.stacks, self.sink_indexes = res
+        self._invalidate_grains()
 
     def clean(self, version="cpp", condition_flag=None):
         res = clean_labels(self.xyz, self.params, self.neighbors_indexes, self.labels,
                            self.stacks, self.ndon, self.normals,
                            version=version, condition_flag=condition_flag)
         self.labels, self.stacks, self.sink_indexes = res
+        self._invalidate_grains()
 
     def run(self, version="matlab_dbscan", run_seed=42):
         """Canonical MATLAB-compatible workflow: denoise -> segment -> cluster -> clean -> grains.
@@ -174,11 +208,26 @@ class G3Point:
 
     # --- grains -----------------------------------------------------------------------------
     def compute_grains(self, run_seed=42):
-        """Fit ellipsoids + Acover to every grain -> typed per-grain table (self.grains)."""
+        """Fit ellipsoids + Acover to every grain -> typed per-grain table (self.grains).
+
+        Also records run-level provenance (denoise backend/params, Acover RNG algorithm, seed,
+        and sample count) so a result can never silently reflect a changed default.
+        """
         self.grains = compute_grains(
             self.xyz, self.stacks, self.source_indexes,
             fit_method=self.params.fit_method, a_quality_thresh=self.params.a_quality_thresh,
             run_seed=run_seed)
+        self.provenance = {
+            "denoise_backend": "statistical_outlier_removal",
+            "denoise_enabled": bool(getattr(self.params, "denoise", 0)),
+            "denoise_n_neighbors": self.params.denoise_n_neighbors,
+            "denoise_std_ratio": self.params.denoise_std_ratio,
+            "fit_method": self.params.fit_method,
+            "acover_rng": "numpy.random.default_rng (PCG64)",
+            "acover_run_seed": run_seed,
+            "acover_n_samples": ACOVER_N_SAMPLES,
+            "a_quality_thresh": self.params.a_quality_thresh,
+        }
         return self.grains
 
     def grain_size_distribution(self):
@@ -232,9 +281,14 @@ class G3Point:
         pcd.points = o3d.utility.Vector3dVector(self.xyz)
         rng = np.random.default_rng(42)
         if other_colors:
-            colors = generate_distinct_colors(len(self.stacks))[self.labels, :]
+            palette = generate_distinct_colors(len(self.stacks))
         else:
-            colors = rng.random((len(self.stacks), 3))[self.labels, :]
+            palette = rng.random((len(self.stacks), 3))
+        # Unlabelled points (-1) must not index the palette (numpy would wrap -1 to the last
+        # grain's colour); paint them a neutral grey instead.
+        colors = np.full((len(self.labels), 3), 0.5)
+        labelled = self.labels != UNLABELLED
+        colors[labelled] = palette[self.labels[labelled], :]
         pcd.colors = o3d.utility.Vector3dVector(colors)
         pcd_sinks = o3d.geometry.PointCloud()
         pcd_sinks.points = o3d.utility.Vector3dVector(self.xyz[self.sink_indexes, :])
