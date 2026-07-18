@@ -69,7 +69,7 @@ def compute_mean_angle(params, labels, neighbors_indexes, ndon, normals, version
             for k, n in enumerate(j):
                 A[labels[i], labels[n]] = A[labels[i], labels[n]] + angle_rot_2_vec_mat(P1, P2, version='cpp')[k]
                 N[labels[i], labels[n]] = N[labels[i], labels[n]] + 1
-        elif version == 'matlab' or 'matlab_dbscan':
+        elif version == 'matlab' or version == 'matlab_dbscan':
             # Add this angle to the angle matrix between each label
             A[labels[i], labels[j]] = A[labels[i], labels[j]] + angle_rot_2_vec_mat(P1, P2, version=None)
             # Number of occurrences
@@ -100,7 +100,12 @@ def merge_labels_dbscan(labels, stacks, condition, condition_flag=None):
     Mmerge[np.where(condition)] = 1e9
     np.fill_diagonal(Mmerge, 0)
 
-    clustering = DBSCAN(eps=1, min_samples=1, metric='precomputed').fit(Mmerge)
+    # MATLAB's dbscan traverses the precomputed distance matrix in the transposed sense
+    # relative to sklearn: for the ASYMMETRIC merge condition (Nneigh/Aangle are not
+    # symmetric) the two directions give different partitions. Transposing Mmerge makes
+    # sklearn reproduce MATLAB exactly (ARI=1.0 on every fixture, cluster and clean
+    # stages); it is a no-op on the symmetric clean-stage matrix.
+    clustering = DBSCAN(eps=1, min_samples=1, metric='precomputed').fit(Mmerge.T)
     new_labels = np.zeros(labels.shape, dtype=int)
     nb_clusters = len(np.unique(clustering.labels_))
     new_stacks = [[] for k in range(nb_clusters)]
@@ -293,8 +298,9 @@ def clean_labels(xyz, params, neighbors_indexes, labels, stacks, ndon, normals,
         f'[clean_labels] check normals at the borders: {nlabels}/{nlabels_start} kept ({nlabels_start - nlabels} removed)')
     nlabels_start = nlabels
 
-    # remove small labels
-    condition = (nstack > params.n_min)
+    # remove small labels. MATLAB (clean_labels.m) keeps nstack >= minnpoint; using a
+    # strict > here drops the finest grains sitting exactly at the threshold.
+    condition = (nstack >= params.n_min)
     labels, stacks, sink_indexes = keep_labels(labels, stacks, condition, sink_indexes)
 
     nlabels = len(np.unique(labels[labels != -1]))

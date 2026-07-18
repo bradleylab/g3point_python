@@ -162,16 +162,14 @@ class G3Point:
         return center, radii, quaternions, rotation_matrix, ellipsoid_parameters
 
     def fit_ellipsoids(self):
-        self.g3point_results = np.zeros((len(self.stacks), 3 + 3 + 9))
+        self.g3point_results = np.full((len(self.stacks), 3 + 3 + 9), np.nan)
         for label, stack in enumerate(tqdm(self.stacks)):
             xyz_grain = self.xyz[stack, :]
             center, radii, quaternions, rotation_matrix, ellipsoid_parameters = fit_ellipsoid_to_grain(xyz_grain)
+            if center is None or rotation_matrix is None:
+                continue  # failed fit -> leave the row as NaN (mirrors MATLAB fitok==0)
             self.g3point_results[label, 0:3] = center
             self.g3point_results[label, 3:6] = radii
-            if rotation_matrix is not None:
-                self.g3point_results[label, 6:15] = rotation_matrix.flatten()
-            else:
-                self.g3point_results[label, 6:15].fill(np.nan)
             self.g3point_results[label, 6:15] = rotation_matrix.flatten()
 
     def get_pcd_and_pcd_sinks(self, other_colors=False):

@@ -90,6 +90,10 @@ def implicit_to_explicit(p, ignore_quaternions=True):
     :return rotation_matrix: ellipsoid rotation (radii directions as rows of the 3x3 matrix)
     """
 
+    # copy first: this function is called with the caller's ellipsoid-parameter vector and
+    # the halving below would otherwise mutate it in place (corrupts any downstream reuse).
+    p = np.asarray(p, dtype=float).copy()
+
     # eliminate times two from rotation and translation terms
     p[3:9] = 0.5 * p[3:9]
 
@@ -122,10 +126,13 @@ def implicit_to_explicit(p, ignore_quaternions=True):
     radii = np.sqrt(-s[3, 3] / eigenvalues)
     rotation_matrix = eigenvectors.T
 
-    # reorder radii and eigenvectors
+    # reorder radii and eigenvectors (largest semi-axis first).
+    # rotation_matrix rows are the axis directions (R = evecs.T, cf. ellipsoid_im2ex.m),
+    # so a radii permutation must reorder ROWS, not columns -- reordering columns leaves
+    # R inconsistent with the sorted radii and mis-orients the fitted ellipsoid.
     index_array = np.argsort(radii)[::-1]
     radii = radii[index_array]
-    rotation_matrix = rotation_matrix[:, index_array]
+    rotation_matrix = rotation_matrix[index_array, :]
 
     # convert rotation matrix to quaternions
     if ignore_quaternions:

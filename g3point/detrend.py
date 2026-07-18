@@ -85,8 +85,13 @@ def vec2rot(a, b, method='Rik'):
     c = np.dot(a, b)  # cosine of angle
 
     if method == 'Rik':
-        skew = get_skew_symmetric_cross_product_matrix(v)
-        rotation = np.eye(3) + skew + skew @ skew * (1 - c) / s**2
+        if s < np.finfo(float).eps:
+            # a and b already (anti)parallel: cross product is ~0, s**2 division blows up.
+            # orient_normal forces the source toward +z, so this is the aligned case -> I.
+            rotation = np.eye(3)
+        else:
+            skew = get_skew_symmetric_cross_product_matrix(v)
+            rotation = np.eye(3) + skew + skew @ skew * (1 - c) / s**2
 
     if method == 'Kjetil':  # a and be shall be normalized
         G = np.array([[c, -s, 0],

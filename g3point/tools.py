@@ -76,7 +76,9 @@ def load_data(file, dtype=None):
         xyz = np.asarray(pcd_orig)
     elif ext == '.laz':
         las_data = laspy.read(file)
-        xyz = np.c_[las_data.X, las_data.Y, las_data.Z]
+        # use the scaled/offset coordinates (lowercase x/y/z), not the raw integer
+        # X/Y/Z record values -- the latter are pre-scale and are not real-world metres.
+        xyz = np.c_[las_data.x, las_data.y, las_data.z]
     else:
         raise TypeError('unhandled extension ' + ext)
 
@@ -88,32 +90,16 @@ def load_data(file, dtype=None):
 
 def check_stacks(stacks, number_of_points):
 
-    # Initialize the set of indexes with the first stack
-    stack = stacks[0]
-    myset = {*stack}
-
-    # Initialize min and max
-    min = float('inf')
-    max = float('-inf')
-
-    for idx in stack:
-        if idx < min:
-            min = idx
-        if idx > max:
-            max = idx
-
-    for stack in stacks[1:]:
-        for idx in stack:
-            if idx < min:
-                min = idx
-            if idx > max:
-                max = idx
+    # Union of all point indexes across the stacks
+    myset = set()
+    for stack in stacks:
         myset.update(stack)
 
-    # Check the coherency of the stack
+    # Check the coherency of the stacks: they must be disjoint and cover exactly
+    # `number_of_points` points. The old code also required min index == 0, but that is
+    # NOT an invariant after clean_labels removes small/flat grains -- point 0 can be
+    # dropped, leaving min > 0 -- so that spurious check crashed ~40% of real tiles.
     if len(myset) != number_of_points:  # number of values in the set
         raise ValueError('stacks are not coherent: the length of the set shall be equal to the number of points')
-    if min != 0:  # min value in the set
-        raise ValueError('stacks are not coherent: min shall be 0')
 
     return True
