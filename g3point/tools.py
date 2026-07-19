@@ -90,16 +90,21 @@ def load_data(file, dtype=None):
 
 def check_stacks(stacks, number_of_points):
 
-    # Union of all point indexes across the stacks
+    # Union and total membership count across all stacks.
     myset = set()
+    total = 0
     for stack in stacks:
-        myset.update(stack)
+        total += len(stack)
+        myset.update(int(i) for i in stack)
 
-    # Check the coherency of the stacks: they must be disjoint and cover exactly
-    # `number_of_points` points. The old code also required min index == 0, but that is
-    # NOT an invariant after clean_labels removes small/flat grains -- point 0 can be
-    # dropped, leaving min > 0 -- so that spurious check crashed ~40% of real tiles.
-    if len(myset) != number_of_points:  # number of values in the set
-        raise ValueError('stacks are not coherent: the length of the set shall be equal to the number of points')
+    # Coherency: the stacks must be DISJOINT (no point in two grains) and cover exactly
+    # `number_of_points` labelled points. The old code also required min index == 0, but that
+    # is NOT an invariant after clean_labels removes small/flat grains (point 0 can be dropped,
+    # leaving min > 0) -- so that spurious check crashed ~40% of real tiles. It only checked
+    # union cardinality, which silently accepts overlapping stacks; require disjointness too.
+    if len(myset) != total:
+        raise ValueError('stacks are not coherent: stacks overlap (a point appears in >1 grain)')
+    if len(myset) != number_of_points:
+        raise ValueError('stacks are not coherent: covered points != number_of_points')
 
     return True

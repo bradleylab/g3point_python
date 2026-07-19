@@ -10,7 +10,7 @@ from .cluster import clean_labels, cluster
 from .denoise import statistical_outlier_removal
 from .detrend import orient_normals, rotate_point_cloud_plane
 from .G3PointParameters import G3PointParameters
-from .grains import compute_grains, grain_size_distribution
+from .grains import SUPPORTED_FIT_METHODS, compute_grains, grain_size_distribution
 from .segment import segment_labels
 from .tools import load_data, save_data_with_colors
 
@@ -18,7 +18,6 @@ from .tools import load_data, save_data_with_colors
 # MATLAB adjustnormals3d which places the sensor 10000 above the min-shifted cloud.
 SENSOR_HEIGHT = 10000.0
 UNLABELLED = -1
-SUPPORTED_FIT_METHODS = {"direct", "inertia"}
 ACOVER_N_SAMPLES = 200  # ellipsoid-surface samples per grain (quality.acover default)
 
 

@@ -32,6 +32,12 @@ def test_check_stacks_rejects_wrong_count():
         check_stacks([[0, 1], [2]], 4)  # covers 3 points, claims 4
 
 
+def test_check_stacks_rejects_overlap():
+    from g3point.tools import check_stacks
+    with pytest.raises(ValueError):
+        check_stacks([[0, 1, 2], [2, 3]], 4)  # point 2 appears in two grains
+
+
 # --------------------------------------------------------------------------------------------- #
 # get_sink_indexes -- highest-z point per grain, first on ties
 # --------------------------------------------------------------------------------------------- #
@@ -158,6 +164,14 @@ def test_compute_grains_too_few_points():
     xyz = np.random.default_rng(0).random((3, 3))
     grains = compute_grains(xyz, [np.arange(3)], np.arange(3))
     assert grains[0].fitok is False and grains[0].fail_reason == "too_few_points"
+
+
+def test_compute_grains_rejects_unsupported_fit_method():
+    # a config typo must fail loudly, not silently empty the GSD via per-grain fit_error
+    from g3point.grains import compute_grains
+    xyz = np.random.default_rng(0).random((20, 3))
+    with pytest.raises(ValueError):
+        compute_grains(xyz, [np.arange(20)], np.arange(20), fit_method="bogus")
 
 
 # --------------------------------------------------------------------------------------------- #

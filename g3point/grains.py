@@ -22,6 +22,7 @@ from .quality import acover, grain_rng
 
 A_QUALITY_THRESH_DEFAULT = 10.0
 MIN_POINTS_FOR_FIT = 4  # an ellipsoid fit needs at least this many points
+SUPPORTED_FIT_METHODS = {"direct", "inertia"}  # methods fit_ellipsoid_to_grain implements
 
 
 @dataclass
@@ -67,6 +68,12 @@ def compute_grains(xyz: np.ndarray, stacks, source_indexes: np.ndarray,
     run_seed : int
         Base seed for the deterministic per-grain Acover RNG.
     """
+    # Validate the fit method up front: an unsupported method raises ValueError deep in the fit,
+    # which the per-grain handler below would otherwise swallow as a numerical "fit_error" on
+    # EVERY grain -> a silently empty GSD from a config typo. Fail loudly instead.
+    if fit_method not in SUPPORTED_FIT_METHODS:
+        raise ValueError(f"fit_method '{fit_method}' is not supported; "
+                         f"use one of {sorted(SUPPORTED_FIT_METHODS)}")
     source_indexes = np.asarray(source_indexes)
     grains: list[GrainResult] = []
     for label, stack in enumerate(stacks):

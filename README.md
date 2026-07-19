@@ -65,46 +65,30 @@ To instantiate a G3Point object, you will need a point cloud, in las or ply and 
 ```data``` 
 section).
 
-```
-g3point_data = g3point.G3Point(cloud, ini)
-```
-
-### Initial segmentation
-
-The initial segmentation is done once and for all, it is not modified by the clustering or by the cleaning. IT sets 
-the following attributes:
-
-- ```initial_labels```
-- ```initial_sink_indexes```
-- ```initial_stacks```
-
-At the end of the initial segmentation, the variables ```labels```, ```sink_indexes``` and ```stacks``` are initialized to their 
-```initial_``` counterparts.
-
-```
-g3point_data.initial_segmentation()
+```python
+import g3point
+g = g3point.G3Point(cloud, ini)                 # cloud = .ply/.laz, ini = parameter file
+grains = g.run(version="matlab_dbscan")          # denoise -> segment -> cluster -> clean -> fit
+gsd = g.grain_size_distribution()                 # b-axis diameters (m), fitok & aqualityok grains
+out, out_sinks = g.save()                         # optional: write labelled point clouds
 ```
 
-### Cluster
+`run()` is the verified MATLAB-parity path (`version="matlab_dbscan"`). It runs `denoise()`
+(if the config enables it), `initial_segmentation()`, `cluster()`, `clean()`, and the per-grain
+ellipsoid fit, in that order.
 
-The clustering is based on the initial segmentation.
+### Driving the stages manually
 
-```
-g3point_data.cluster()
-```
+You can call the stages yourself, but note two defaults: `cluster()` and `clean()` default to
+`version="cpp"` (a legacy mode that does **not** reproduce MATLAB) — pass `version="matlab_dbscan"`
+for the verified path — and call `denoise()` first if your `.ini` sets `denoise = 1`.
 
-### Clean
-
-The cleaning is based on the current state of the labels
-
-```
-g3point_data.clean()
-```
-
-### Save the results
-
-```
-out, out_sinks = g3point_data.save()
+```python
+g.denoise()
+g.initial_segmentation()
+g.cluster(version="matlab_dbscan")
+g.clean(version="matlab_dbscan")
+grains = g.compute_grains()
 ```
 
 ### Ellipsoid fitting

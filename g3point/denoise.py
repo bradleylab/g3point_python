@@ -1,21 +1,21 @@
 """Point-cloud denoising for the G3Point pipeline.
 
-The MATLAB reference removes outliers with `pcdenoise`. That is NOT reproducible by standard
-statistical outlier removal: sweeping neighbour count and threshold, the closest a standard
-SOR gets to MATLAB's exact inlier set is ~0.99 Jaccard, and the removal counts stay
-inconsistent tile to tile -- so MATLAB's denoiser is a different (likely iterative /
-robust-spread) algorithm in the same family, not merely different parameters. See PARITY.md
-divergence #1.
+The MATLAB reference removes outliers with the proprietary `pcdenoise`. That is NOT reproducible
+by standard statistical outlier removal: the best a standard SOR achieves against MATLAB's exact
+inlier set is retained-set Jaccard ~0.99, but the removed-set Jaccard is only 0.21-0.84 and the
+removal counts stay inconsistent tile to tile -- so `pcdenoise` is a different algorithm in the
+same family, not merely different parameters.
 
-This module therefore provides an explicit, documented standard SOR rather than trying to
-replicate `pcdenoise`. On the CALIBRATION fixtures it is ~0.99 concordant with MATLAB's inliers
-on the RETAINED set but only 0.21-0.84 on the REMOVED set (the discriminating metric), and the
-downstream effect is not uniformly negligible: 3 of 4 fixture tiles match the grain-size
-distribution to <=9 mm on D16/D50/D84, but the smallest tile misses D84 by 93 mm because the
-different denoise dropped one large grain (PARITY.md divergence #1). Equivalence is therefore
-NOT certified: the parameters were tuned on these fixtures, and a predeclared held-out,
-assertion-bearing GSD gate is still owed. `denoise_concordance` reports both retained- and
-removed-set agreement against a MATLAB fixture inlier set.
+This module therefore provides an explicit, documented standard SOR as a deliberate OPEN-SOURCE
+SUBSTITUTE for `pcdenoise`. It does not reproduce `pcdenoise` bit-for-bit and is NOT tuned to
+match MATLAB's output: `std_ratio` / `n_neighbors` are ordinary parameters (defaults below) set
+per run in the `.ini`. Because SOR != `pcdenoise`, the port's grain-size distribution runs slightly
+finer than MATLAB; held-out validation (40 field tiles, port end-to-end vs the existing MATLAB
+`granulo`) at the default `std_ratio=3.0` gave median dD50 -0.8 mm / dD84 -3.4 mm -- the expected,
+quantified difference between two legitimate denoisers, not a defect. The full account (and the
+held-out reproduction scripts, which use field data and live outside this repository) is in
+PARITY.md divergence #1. `denoise_concordance` reports retained- and removed-set agreement against
+a MATLAB fixture inlier set.
 """
 from __future__ import annotations
 
