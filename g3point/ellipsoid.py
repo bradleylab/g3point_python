@@ -88,9 +88,17 @@ def implicit_to_explicit(p, ignore_quaternions=True):
     :return rotation_matrix: ellipsoid rotation (radii directions as rows of the 3x3 matrix)
     """
 
-    # copy first: this function is called with the caller's ellipsoid-parameter vector and
-    # the halving below would otherwise mutate it in place (corrupts any downstream reuse).
-    p = np.asarray(p, dtype=float).copy()
+    # Reject a genuinely-complex parameter vector BEFORE any real cast. direct_fit's generalized
+    # eigenvector can be complex for a degenerate quadric; silently casting it to real (the old
+    # `dtype=float`) accepted a non-real ellipsoid as if it were real, leaving Acover as the only
+    # backstop. Tolerate numerical-noise imaginary parts (absolute + relative), reject the rest.
+    p = np.asarray(p).copy()
+    if np.iscomplexobj(p):
+        scale = float(np.max(np.abs(p.real))) if p.size else 0.0
+        if np.max(np.abs(p.imag)) > 1e-12 + 1e-9 * scale:
+            return None, None, None, None
+        p = p.real
+    p = p.astype(float)
 
     # eliminate times two from rotation and translation terms
     p[3:9] = 0.5 * p[3:9]
@@ -132,22 +140,12 @@ def implicit_to_explicit(p, ignore_quaternions=True):
     radii = radii[index_array]
     rotation_matrix = rotation_matrix[index_array, :]
 
-    # Convert to a quaternion from the FINAL (reordered) rotation, not the stale unreordered
-    # eigenvectors -- otherwise the quaternion describes a different orientation than the returned
-    # rotation_matrix. Enforce a right-handed frame (det +1) so from_matrix never raises on the
-    # sign-free eigenvectors; a genuinely complex fit has no real rotation -> no quaternion.
-    if ignore_quaternions:
-        quaternions = None
-    else:
-        rm = np.asarray(rotation_matrix)
-        if np.iscomplexobj(rm) and np.max(np.abs(rm.imag)) > 1e-9:
-            quaternions = None
-        else:
-            r = np.real(rm).astype(float)
-            if np.linalg.det(r) < 0:
-                r = r.copy()
-                r[2] = -r[2]
-            quaternions = scipy.spatial.transform.Rotation.from_matrix(r).as_quat()
+    # No quaternion is emitted. `rotation_matrix` rows are axis DIRECTIONS -- a sign-free frame that
+    # can be improper (det -1) -- so a proper-rotation quaternion cannot be made consistent with the
+    # returned matrix without changing it (and the Acover geometry that consumes it). The earlier
+    # code built the quaternion from a different (right-handed copy of the) matrix than it returned,
+    # a false contract. The output is unused downstream; return None rather than a mismatched value.
+    quaternions = None
 
     return center, radii, quaternions, rotation_matrix
 
@@ -201,7 +199,10 @@ def direct_fit(xyz, method='evd'):
             ix = np.argmin(np.abs(eigenvalues))
             v = eigenvectors[:, ix]
 
-    p = np.zeros(v.shape)
+    # Preserve the eigenvector's dtype: if the selected generalized eigenvector is complex (a
+    # degenerate quadric), keep it complex so implicit_to_explicit can reject it, rather than
+    # silently discarding the imaginary part here.
+    p = np.zeros(v.shape, dtype=v.dtype)
     p[0: 3] = v[0: 3]
     p[3: 6] = 2 * v[5: 2: -1]  # exchange order of y*z, x*z, x*y to x*y, x*z, y*z
     p[6: 9] = 2 * v[6: 9]

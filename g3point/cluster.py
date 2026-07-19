@@ -250,7 +250,8 @@ def cluster(xyz, params, neighbors_indexes, labels, stacks, ndon, sink_indexes, 
 
     new_sink_indexes = get_sink_indexes(new_stacks, xyz)
 
-    check_stacks(stacks, len(new_labels))
+    # validate the OUTPUT stacks (every point still labelled after merging), not the input
+    check_stacks(new_stacks, len(new_labels), n_cloud=len(new_labels))
 
     print(
         f'[cluster_labels] check normals at the borders: {nlabels}/{nlabels_start} kept ({nlabels_start - nlabels} removed)')
@@ -325,6 +326,6 @@ def clean_labels(xyz, params, neighbors_indexes, labels, stacks, ndon, normals,
     # how many points have a valid label, and, as a consequence, are in the stacks
     n_points_with_valid_label = np.count_nonzero(labels != -1)
 
-    check_stacks(stacks, n_points_with_valid_label)
+    check_stacks(stacks, n_points_with_valid_label, n_cloud=len(labels))
 
     return labels, stacks, sink_indexes

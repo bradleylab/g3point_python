@@ -38,6 +38,15 @@ def test_check_stacks_rejects_overlap():
         check_stacks([[0, 1, 2], [2, 3]], 4)  # point 2 appears in two grains
 
 
+def test_check_stacks_rejects_out_of_range_indices():
+    from g3point.tools import check_stacks
+    with pytest.raises(ValueError):
+        check_stacks([[10, 11]], 2, n_cloud=2)     # indices >= cloud size
+    with pytest.raises(ValueError):
+        check_stacks([[-2, -1]], 2, n_cloud=2)     # negative indices
+    assert check_stacks([[1, 3]], 2, n_cloud=4) is True   # in range, disjoint, correct count
+
+
 # --------------------------------------------------------------------------------------------- #
 # get_sink_indexes -- highest-z point per grain, first on ties
 # --------------------------------------------------------------------------------------------- #
@@ -139,6 +148,19 @@ def test_fit_ellipsoid_zero_extent_raises_and_is_guarded_upstream():
             fit_ellipsoid_to_grain(pts, method="direct")
 
 
+def test_implicit_to_explicit_rejects_complex_input():
+    # a genuinely-complex parameter vector is not a real ellipsoid -> rejected before any real cast
+    from g3point.ellipsoid import implicit_to_explicit
+    p = np.ones(10, dtype=complex)
+    p[0] = 1.0 + 0.5j
+    assert implicit_to_explicit(p)[0] is None
+    # a real-valued complex array (numerical-noise imaginary) is accepted (cast to real)
+    q = np.ones(10, dtype=complex) * 0.1
+    q[0] = 3.0 + 1e-15j
+    # (may still fail positive-definiteness, but must not be rejected as complex -> not a TypeError)
+    implicit_to_explicit(q)
+
+
 def test_compute_grains_degenerate_is_failed_not_error():
     from g3point.grains import compute_grains
     xyz = np.zeros((10, 3))                       # identical points -> zero extent
@@ -221,6 +243,19 @@ def test_segment_handles_coincident_points():
     assert sorted(int(i) for s in stacks for i in s) == list(range(60))    # coherent partition
 
 
+def test_segment_all_coincident_neighbourhood_is_coherent():
+    # documented divergence (PARITY.md): an ALL-coincident neighbourhood becomes a coherent
+    # singleton rather than MATLAB's undefined argmin(NaN) behaviour. It must not crash or drop points.
+    from scipy.spatial import KDTree
+    from g3point.segment import segment_labels
+    xyz = np.vstack([np.zeros((8, 3)),                                 # 8 identical points
+                     np.random.default_rng(0).random((20, 3)) + 5.0])  # + distinct points
+    knn = 5
+    _, nbr = KDTree(xyz).query(xyz, knn + 1)
+    labels, stacks, _n, _lmax = segment_labels(xyz, knn, nbr[:, 1:])   # must not raise
+    assert sorted(int(i) for s in stacks for i in s) == list(range(28))   # coherent partition
+
+
 def test_add_to_stack_bw_deep_chain_no_recursion_error():
     from g3point.segment import add_to_stack_bw
     # a single catchment 6000 points deep -- a recursive builder would blow the ~1000 call-stack
@@ -268,11 +303,16 @@ def test_acover_seeded_is_reproducible():
 
 def test_run_result_is_immutable():
     import dataclasses
+    from types import MappingProxyType
     from g3point.grains import RunResult
-    r = RunResult(grains=[], provenance={"merge_version": "matlab_dbscan"})
-    assert r.provenance["merge_version"] == "matlab_dbscan"
+    r = RunResult(grains=(), provenance=MappingProxyType({"merge_version_cluster": "matlab_dbscan"}))
+    assert r.provenance["merge_version_cluster"] == "matlab_dbscan"
     with pytest.raises(dataclasses.FrozenInstanceError):
-        r.grains = [1]                                   # frozen: cannot rebind fields
+        r.grains = ()                                    # frozen: cannot rebind fields
+    with pytest.raises(AttributeError):
+        r.grains.append(1)                               # grains is a tuple, not a list
+    with pytest.raises(TypeError):
+        r.provenance["x"] = 1                            # provenance is a read-only mapping
 
 
 def test_grain_rng_depends_only_on_min_index_and_seed():
@@ -319,9 +359,12 @@ def test_sor_removes_isolated_outlier():
 def test_sor_rejects_bad_parameters():
     from g3point.denoise import statistical_outlier_removal
     xyz = np.random.default_rng(0).random((50, 3))
-    for bad in (dict(n_neighbors=0), dict(std_ratio=-1.0), dict(std_ratio=np.nan)):
+    for bad in (dict(n_neighbors=0), dict(n_neighbors=1.9), dict(std_ratio=-1.0),
+                dict(std_ratio=np.nan)):
         with pytest.raises(ValueError):
             statistical_outlier_removal(xyz, **bad)
+    with pytest.raises(ValueError):
+        statistical_outlier_removal(np.random.default_rng(0).random((50, 2)))   # wrong shape
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -339,21 +382,23 @@ def test_laz_export_preserves_precision(tmp_path):
     assert np.allclose(back, xyz, atol=6e-4)             # ~1 mm; laspy's 0.01 default would lose 1 cm
 
 
+def test_laz_export_empty_does_not_crash(tmp_path):
+    from g3point.tools import save_data_with_colors
+    out = save_data_with_colors(str(tmp_path / "src.ply"), np.zeros((0, 3)), [],
+                                np.array([], dtype=int), "_E")   # np.min on empty would raise
+    assert out.endswith(".laz")
+
+
 # --------------------------------------------------------------------------------------------- #
 # Quaternion is consistent with the reordered rotation (P2-QUATERNION) and does not raise.
 # --------------------------------------------------------------------------------------------- #
-def test_quaternion_matches_reordered_rotation():
-    from scipy.spatial.transform import Rotation
+def test_no_quaternion_is_emitted():
+    # The quaternion output is intentionally None: rotation_matrix rows are a sign-free axis frame
+    # (possibly improper), so no proper-rotation quaternion is consistent with the returned matrix.
     from g3point.ellipsoid import explicit_to_implicit, implicit_to_explicit
-    center, radii = np.zeros(3), np.array([3.0, 2.0, 1.4])
-    p = explicit_to_implicit(center, radii, _orthonormal_rows(seed=5))
-    _c, _r, quat, R = implicit_to_explicit(p, ignore_quaternions=False)
-    assert quat is not None
-    ref = np.real(R).astype(float)
-    if np.linalg.det(ref) < 0:                           # the quaternion encodes the right-handed frame
-        ref = ref.copy()
-        ref[2] = -ref[2]
-    assert np.allclose(Rotation.from_quat(quat).as_matrix(), ref, atol=1e-6)
+    p = explicit_to_implicit(np.zeros(3), np.array([3.0, 2.0, 1.4]), _orthonormal_rows(seed=5))
+    _c, _r, quat, _R = implicit_to_explicit(p, ignore_quaternions=False)
+    assert quat is None
 
 
 def test_cli_json_emits_null_for_empty_percentiles():
@@ -363,6 +408,24 @@ def test_cli_json_emits_null_for_empty_percentiles():
     pct_json = {k: (v if v == v else None) for k, v in pct.items()}
     doc = json.dumps({"percentiles_m": pct_json}, allow_nan=False)   # must not raise on NaN
     assert json.loads(doc)["percentiles_m"]["D50"] is None
+
+
+@pytest.mark.skipif(not (DATA / "Otira_1cm_grains.ply").exists(),
+                    reason="Otira example cloud not present")
+def test_cli_json_subprocess_is_a_single_valid_document(tmp_path):
+    # end-to-end contract: `g3point ... --json` writes ONE parseable JSON doc to stdout, diagnostics
+    # to stderr. Catches serialization regressions the payload-only test cannot (e.g. a non-dict
+    # provenance mapping).
+    import json
+    import subprocess
+    import sys
+    proc = subprocess.run(
+        [sys.executable, "-m", "g3point.cli",
+         str(DATA / "Otira_1cm_grains.ply"), _otira_ini(tmp_path), "--json"],
+        capture_output=True, text=True, cwd=str(REPO))
+    assert proc.returncode == 0, proc.stderr[-500:]
+    doc = json.loads(proc.stdout)                                    # must parse as a whole
+    assert doc["provenance"]["merge_version_cluster"] == "matlab_dbscan"
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -404,9 +467,11 @@ def test_otira_end_to_end_and_frame_separation(tmp_path):
     prov = result.provenance
     assert prov["denoise_backend"] == "statistical_outlier_removal"
     assert prov["acover_run_seed"] == 42
-    assert prov["merge_version"] == "matlab_dbscan"      # the mode that actually ran
-    assert prov["denoise_applied"] is True               # ini sets denoise=1
-    assert prov["clean_applied"] is True                 # ini sets clean=1
+    assert prov["merge_version_cluster"] == "matlab_dbscan"   # cluster + clean modes tracked apart
+    assert prov["merge_version_clean"] == "matlab_dbscan"     # ini sets clean=1, so clean ran
+    assert prov["denoise_applied"] is True                    # ini sets denoise=1
+    assert prov["clean_applied"] is True
     assert prov["n_points_analysis"] == g.xyz.shape[0]
     assert prov["n_grains_in_gsd"] == len(g.grain_size_distribution())
     assert prov["parameters"]["knn"] == 20
+    assert prov["cloud"].endswith(".ply")                     # input identity recorded

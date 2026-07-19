@@ -51,7 +51,7 @@ def _output_header(cloud, xyz):
             pass
     else:
         header.scales = np.array([0.001, 0.001, 0.001])   # 1 mm
-        header.offsets = np.min(xyz, axis=0)
+        header.offsets = np.min(xyz, axis=0) if len(xyz) else np.zeros(3)  # empty save -> no min()
     return header
 
 
@@ -110,7 +110,7 @@ def load_data(file, dtype=None):
     return xyz
 
 
-def check_stacks(stacks, number_of_points):
+def check_stacks(stacks, number_of_points, n_cloud=None):
 
     # Union and total membership count across all stacks.
     myset = set()
@@ -128,5 +128,9 @@ def check_stacks(stacks, number_of_points):
         raise ValueError('stacks are not coherent: stacks overlap (a point appears in >1 grain)')
     if len(myset) != number_of_points:
         raise ValueError('stacks are not coherent: covered points != number_of_points')
+    # When the cloud size is known, indices must be valid rows into it (disjointness + count alone
+    # would accept out-of-range or negative indices).
+    if n_cloud is not None and myset and (min(myset) < 0 or max(myset) >= n_cloud):
+        raise ValueError('stacks are not coherent: a point index is out of range [0, n_cloud)')
 
     return True

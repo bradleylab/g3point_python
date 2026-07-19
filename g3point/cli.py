@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
             "n_grains_fit": n_grains,
             "n_grains_in_gsd": n_kept,
             "percentiles_m": pct_json,
-            "provenance": result.provenance,
+            "provenance": dict(result.provenance),   # plain dict for the JSON encoder
         }
         json.dump(payload, sys.stdout, indent=2, allow_nan=False, default=float)
         sys.stdout.write("\n")

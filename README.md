@@ -92,13 +92,20 @@ for the verified path — and call `denoise()` first if your `.ini` sets `denois
 g.denoise()
 g.initial_segmentation()
 g.cluster(version="matlab_dbscan")
-g.clean(version="matlab_dbscan")
+if g.params.clean:                    # honour the clean flag exactly as run() does
+    g.clean(version="matlab_dbscan")
 grains = g.compute_grains()
 ```
 
+Calling `clean()` unconditionally here (when the config has `clean = 0`) would give a different
+result from `run()` — hence the guard.
+
 ### Ellipsoid fitting
 
-Once you have a group of points, it is possible to fit an ellipsoid to this group.
-This is not done for the g3point_data object as a whole at the current time.
+`compute_grains()` / `run()` already fit an ellipsoid to every grain (see `result.grains`). To fit
+a single arbitrary point group directly:
 
-```center, radii, quaternions, rotation_matrix, ellipsoid_parameters = g3point.fit_ellipsoid_to_grain(xyz)```
+```python
+center, radii, quaternions, rotation_matrix, ellipsoid_parameters = g3point.fit_ellipsoid_to_grain(xyz)
+# quaternions is None -- the rotation is returned as an axis-direction matrix (rows = axes)
+```

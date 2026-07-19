@@ -1,6 +1,7 @@
 import os
 import colorsys
 import random
+from types import MappingProxyType
 
 import numpy as np
 import open3d as o3d
@@ -67,6 +68,10 @@ class G3Point:
             raise ValueError(
                 f"fit_method '{self.params.fit_method}' is not implemented in the port; "
                 f"supported: {sorted(SUPPORTED_FIT_METHODS)}")
+        # knn must be >= 2: the slope computation squeezes the neighbour axis, which collapses
+        # ambiguously at knn == 1 (a single neighbour is also a degenerate segmentation anyway).
+        if self.params.knn < 2:
+            raise ValueError(f"knn must be >= 2, got {self.params.knn}")
 
         # Load (scaled coordinates) and remove invalid (non-finite) points, tracking the map
         # back to rows in the loaded file.
@@ -118,7 +123,8 @@ class G3Point:
             "denoise_applied": False,
             "denoise_n_removed": 0,
             "n_points_analysis": int(len(self.xyz)),
-            "merge_version": None,
+            "merge_version_cluster": None,   # cluster and clean modes tracked separately
+            "merge_version_clean": None,
             "clean_applied": False,
         }
 
@@ -141,8 +147,12 @@ class G3Point:
         self.neighbors_indexes = self.surface = self.normals = None
         self.labels = self.stacks = self.sink_indexes = None
         self._invalidate_grains()
+        # Reset the WHOLE downstream stage record (denoise runs first in run(), so a stale
+        # clean_applied / merge_version from an earlier manual call must not survive into a fresh run).
         self._stage_record.update(denoise_applied=False, denoise_n_removed=0,
-                                  n_points_analysis=int(len(self.xyz)))
+                                  n_points_analysis=int(len(self.xyz)),
+                                  merge_version_cluster=None, merge_version_clean=None,
+                                  clean_applied=False)
         if not getattr(self.params, "denoise", 0):
             return
         kept_xyz, kept = statistical_outlier_removal(
@@ -209,7 +219,7 @@ class G3Point:
                       self.initial_stacks, self.ndon, self.initial_sink_indexes, self.surface,
                       self.normals, version=version, condition_flag=condition_flag)
         self.labels, self.stacks, self.sink_indexes = res
-        self._stage_record["merge_version"] = version
+        self._stage_record["merge_version_cluster"] = version
         self._invalidate_grains()
 
     def clean(self, version="cpp", condition_flag=None):
@@ -217,7 +227,7 @@ class G3Point:
                            self.stacks, self.ndon, self.normals,
                            version=version, condition_flag=condition_flag)
         self.labels, self.stacks, self.sink_indexes = res
-        self._stage_record.update(clean_applied=True, merge_version=version)
+        self._stage_record.update(clean_applied=True, merge_version_clean=version)
         self._invalidate_grains()
 
     def run(self, version="matlab_dbscan", run_seed=42):
@@ -233,7 +243,10 @@ class G3Point:
         if self.params.clean:
             self.clean(version=version)
         self.compute_grains(run_seed=run_seed)
-        return RunResult(grains=self.grains, provenance=self.provenance)
+        # Immutable snapshot: a tuple of grains + a read-only copy of provenance, so the returned
+        # result cannot be mutated even though self.grains / self.provenance remain live caches.
+        return RunResult(grains=tuple(self.grains),
+                         provenance=MappingProxyType(dict(self.provenance)))
 
     def _parameters_snapshot(self) -> dict:
         """The analysis-affecting parameters actually used, for the provenance record."""
@@ -260,7 +273,8 @@ class G3Point:
         n_gsd = sum(1 for g in self.grains if g.fitok and g.aqualityok)
         self.provenance = {
             "engine": "bradleylab/g3point_python",
-            **self._stage_record,  # remove_mins, point counts, denoise_applied/_removed, merge_version, clean_applied
+            "cloud": self.cloud, "ini": self.ini,   # input + config identity
+            **self._stage_record,  # counts, denoise_applied/_removed, cluster/clean merge modes, clean_applied
             "n_grains_total": len(self.grains),
             "n_grains_fit": int(n_fit),
             "n_grains_in_gsd": int(n_gsd),

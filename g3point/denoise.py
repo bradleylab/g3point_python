@@ -2,9 +2,10 @@
 
 The MATLAB reference removes outliers with the proprietary `pcdenoise`. That is NOT reproducible
 by standard statistical outlier removal: the best a standard SOR achieves against MATLAB's exact
-inlier set is retained-set Jaccard ~0.99, but the removed-set Jaccard is only 0.21-0.84 and the
-removal counts stay inconsistent tile to tile -- so `pcdenoise` is a different algorithm in the
-same family, not merely different parameters.
+inlier set is retained-set Jaccard ~0.99, but the removed-set Jaccard is much lower and varies tile
+to tile (0.275, 0.530, 0.853, 0.927 on the four fixtures at the default parameters), and the removal
+counts are inconsistent -- so `pcdenoise` is a different algorithm in the same family, not merely
+different parameters.
 
 This module therefore provides an explicit, documented standard SOR as a deliberate OPEN-SOURCE
 SUBSTITUTE for `pcdenoise`. It does not reproduce `pcdenoise` bit-for-bit and is NOT tuned to
@@ -25,8 +26,8 @@ from scipy.spatial import cKDTree
 # Default denoise strength. This is a plain parameter (like knn or rad_factor) that a user
 # overrides in the .ini per run (denoise_n_neighbors / denoise_std_ratio); it is NOT tuned to
 # reproduce MATLAB pcdenoise. At these defaults SOR removes ~1-1.5% of points on the bed tiles,
-# all sitting >5x farther from their neighbours than the median point (genuine isolated
-# outliers). std_ratio=3.0 (vs a tighter 2.0-2.5) is deliberately conservative given the small
+# the points whose mean neighbour distance is farthest above the cloud-wide mean (its outlier
+# tail). std_ratio=3.0 (vs a tighter 2.0-2.5) is deliberately conservative given the small
 # neighbour count: it removes only clear outliers and avoids trimming legitimately-sparse grain
 # edges. See PARITY.md divergence #1 -- this is an open-source substitute for pcdenoise and does
 # not reproduce it bit-for-bit.
@@ -59,12 +60,18 @@ def statistical_outlier_removal(xyz: np.ndarray,
     kept_indexes : (m,) int array
         Indices of the retained points into the input `xyz` (ascending).
     """
-    if int(n_neighbors) < 1:
-        raise ValueError(f"n_neighbors must be >= 1, got {n_neighbors}")
+    n_int = int(n_neighbors)
+    if n_int != n_neighbors or n_int < 1:
+        raise ValueError(f"n_neighbors must be a positive integer, got {n_neighbors!r}")
     if not np.isfinite(std_ratio) or std_ratio < 0:
         raise ValueError(f"std_ratio must be finite and >= 0, got {std_ratio}")
+    n_neighbors = n_int
     xyz = np.asarray(xyz, dtype=float)
-    if len(xyz) <= n_neighbors + 1:
+    if xyz.ndim != 2 or xyz.shape[1] != 3:
+        raise ValueError(f"xyz must be an (n, 3) array, got shape {xyz.shape}")
+    # need > n_neighbors points to form the n_neighbors+1 query (self + n_neighbors); at exactly
+    # n_neighbors+1 the query is valid and SOR applies.
+    if len(xyz) <= n_neighbors:
         return xyz, np.arange(len(xyz))
     tree = cKDTree(xyz)
     distances, _ = tree.query(xyz, n_neighbors + 1)  # +1: the first neighbour is the point itself

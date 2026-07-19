@@ -103,22 +103,28 @@ def braun_willett_stack_building(receivers, local_maximum_indexes):
 def segment_labels(xyz, knn, neighbors_indexes, braun_willett=True):
     print('[segment_labels]')
 
-    # for each point, compute the slopes between the point and each one of its neighbors
+    # for each point, compute the slopes between the point and each one of its neighbors.
+    # squeeze(axis=2) only removes the trailing length-1 axis from x[neighbors_indexes] (shape
+    # (n, knn, 1)); a bare squeeze would also collapse the neighbour axis when knn == 1.
     x, y, z = np.split(xyz, 3, axis=1)
     n_points = len(xyz)
-    dx = x - np.squeeze(x[neighbors_indexes])  # squeeze removes axis of length 1
-    dy = y - np.squeeze(y[neighbors_indexes])
-    dz = z - np.squeeze(z[neighbors_indexes])
+    dx = x - np.squeeze(x[neighbors_indexes], axis=2)
+    dy = y - np.squeeze(y[neighbors_indexes], axis=2)
+    dz = z - np.squeeze(z[neighbors_indexes], axis=2)
     with np.errstate(invalid="ignore", divide="ignore"):
         slopes = dz / (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5  # slope between a point and each neighbour
 
     # A COINCIDENT neighbour (distance 0, from float32-quantised tiles collapsing near-identical
-    # points) gives an undefined 0/0 slope. MATLAB's min/max ignore NaN; numpy's propagate it,
+    # points) gives an undefined 0/0 = NaN slope. MATLAB's min/max ignore NaN; numpy's propagate it,
     # which corrupts the catchment graph and leaves some points in no stack -> "stacks are not
-    # coherent". Treat an undefined slope as +inf: it is never chosen as the downslope receiver and
-    # never a spurious downhill, so the reduction matches MATLAB's NaN-ignoring behaviour. (No-op on
-    # tiles without coincident points -> segmentation ARI stays 1.0 on the parity fixtures.)
-    slopes = np.where(np.isfinite(slopes), slopes, np.inf)
+    # coherent". Replace ONLY NaN with +inf (leave any real +/-inf slope untouched): +inf is never
+    # chosen as the downslope receiver and never a spurious downhill, matching MATLAB's NaN-ignoring
+    # reduction. No-op on tiles without coincident points -> segmentation ARI stays 1.0 on the
+    # fixtures. DELIBERATE DIVERGENCE (documented, PARITY.md): an ALL-coincident neighbourhood
+    # becomes all-+inf -> min_slope = +inf >= 0 -> a singleton local maximum. MATLAB's `min` returns
+    # NaN there and `argmin` picks the first index (an undefined artifact, no coherent sink); the
+    # port instead yields a coherent singleton grain.
+    slopes = np.where(np.isnan(slopes), np.inf, slopes)
 
     # for each point, find in the neighborhood the point with the minimum slope (the receiver)
     index_of_min_slope = np.argmin(slopes, axis=1)  # get the index of the point with the minimum slope
@@ -135,7 +141,7 @@ def segment_labels(xyz, knn, neighbors_indexes, braun_willett=True):
     else:
         stacks, labels, ndon = philippe_steer_stack_building(receivers, local_maximum_indexes, knn)
 
-    if check_stacks(stacks, len(labels)):
+    if check_stacks(stacks, len(labels), n_cloud=len(labels)):
         print(f"[segment_labels] initial segmentation: {len(stacks)} labels")
     else:
         raise ValueError("[segment_labels] stacks are not valid")

@@ -14,6 +14,7 @@ to `ellipsoid_center`, NOT to `point_centroid`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 import numpy as np
 
@@ -29,12 +30,14 @@ SUPPORTED_FIT_METHODS = {"direct", "inertia"}  # methods fit_ellipsoid_to_grain 
 class RunResult:
     """Immutable result of ``G3Point.run()``: the per-grain table plus the run provenance.
 
-    ``provenance`` records what ACTUALLY executed (merge mode, whether denoise/clean ran, point
-    counts, the full parameter snapshot), so a result can be identified and never silently claims a
-    stage ran when it did not.
+    ``grains`` is a tuple and ``provenance`` a read-only mapping (over a copy), so the result cannot
+    be mutated after the fact -- ``frozen=True`` alone only blocks field rebinding, not
+    ``grains.append(...)`` / ``provenance[...] = ...``. ``provenance`` records what ACTUALLY executed
+    (merge modes, whether denoise/clean ran, point counts, parameter snapshot, input identity), so a
+    result is identifiable and never silently claims a stage ran when it did not.
     """
-    grains: list  # list[GrainResult]
-    provenance: dict
+    grains: tuple            # tuple[GrainResult, ...]
+    provenance: Mapping      # read-only view over a copy
 
 
 @dataclass

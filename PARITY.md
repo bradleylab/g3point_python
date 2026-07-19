@@ -83,22 +83,26 @@ robust-spread) algorithm in the same family, not just different parameters.
   `n_neighbors` are ordinary parameters a user sets in the `.ini` per run (defaults in
   `denoise.py`, single-sourced into `G3PointParameters`).
 - **Default: `n_neighbors=4`, `std_ratio=3.0`.** Chosen on denoise merit, not to match MATLAB:
-  at these values SOR removes ~1–1.5% of points, all sitting >5× farther from their neighbours
-  than the median point (genuine isolated outliers, NOT grain-surface points). `std_ratio=3.0`
+  at these values SOR removes ~1–1.5% of points — the tail whose mean neighbour distance sits
+  farthest above the cloud-wide mean. `std_ratio=3.0`
   is deliberately conservative for the small `n_neighbors=4` statistic (a tighter 2.0–2.5 can
   clip legitimately-sparse grain edges). (An earlier note calling 2.5 "too aggressive / 6%
   removal" was wrong — that 6% was Open3D SOR at `std_ratio=1.0`, a different config.)
 - **Resulting difference from MATLAB (informational, NOT a target).** Because SOR ≠ `pcdenoise`,
-  the two remove different ~1–2% subsets (removed-set Jaccard 0.21–0.84) and the port's GSD runs
+  the two remove different ~1–2% subsets (removed-set Jaccard 0.275/0.530/0.853/0.927 on the four
+  fixtures) and the port's GSD runs
   slightly FINER. Held-out (40 random B4 tiles, excluding the calibration tiles; port end-to-end
   vs existing MATLAB `granulo`) at `std_ratio=3.0`: dD50 median **−0.8 mm** (IQR −2.6..0.0),
   dD84 median **−3.4 mm** (IQR −10.7..+1.6; 3/40 tiles >20 mm at D84 — small-sample coarse-tail
   cases). This is the expected difference between two legitimate denoisers, quantified and
   documented — not a defect. (Reproduce: `scripts/b4_denoise_holdout.py`,
   `scripts/b4_denoise_stdsweep.py`.)
-- **This is the ONLY algorithmic substitution in the pipeline.** Every other G3Point parameter
-  is used identically to MATLAB (same `.ini`), and normals match MATLAB `pcnormals` to 0.000°,
-  so the port reproduces MATLAB by construction everywhere except this one documented step.
+- **Denoise is the only ALGORITHMIC substitution.** Every other G3Point parameter is used
+  identically to MATLAB (same `.ini`), and on the deterministic stages (segment/cluster/clean/
+  ellipsoid) the port matches MATLAB exactly (ARI = 1.0, verified). The other documented divergences
+  below (stochastic Acover, the `ndon` self-count convention, the F5 quantized-input edge, the
+  all-coincident-point policy) are separately noted — "identical everywhere except denoise" refers
+  to the deterministic core, not a claim that no other difference of any kind exists.
 - **How to report it:** METHODS states the port denoises with SOR (stating `n_neighbors` /
   `std_ratio`) as an open-source substitute for `pcdenoise` that does not reproduce it
   bit-for-bit; the two agree on ~99% of retained points and the port's GSD runs a few mm finer.
@@ -141,6 +145,17 @@ MATLAB `loadptCloud` min-shifts then removes invalid points; the port removes no
 FIRST, then min-shifts, so a stray `inf`/`NaN` coordinate cannot poison the per-axis minimum.
 This only differs for clouds that contain non-finite coordinates (none in the fixtures). A
 signed-normal orientation test across both `remove_mins` settings is still owed.
+
+### 7. Coincident points in segmentation — deliberate, coherent-singleton policy
+Float32-quantised tiles can contain coincident points (a zero-distance neighbour → an undefined
+`0/0` slope). MATLAB's `min`/`max` ignore NaN, so a **mixed** neighbourhood (≥1 finite slope) is
+handled the same way by the port, which replaces only the NaN slope with `+inf` (segmentation
+ARI = 1.0 on the fixtures — none of which contain coincident points). For an **all-coincident**
+neighbourhood the two differ: MATLAB's `min` returns NaN and `argmin` picks the first index (an
+undefined artifact — no coherent sink), whereas the port yields a coherent singleton grain. This is
+a deliberate robustness choice (a coherent partition on degenerate input), verified by a unit test;
+it was the fix for a ~12% "stacks are not coherent" crash on the full reach run. It affects only
+points whose entire k-NN is coincident with them — vanishingly rare in real data.
 
 ## G3Point class refactor (done 2026-07-18, post-codex review)
 - **Frames (F2d):** the class no longer overwrites `self.xyz` with detrended coords. Neighbours,
