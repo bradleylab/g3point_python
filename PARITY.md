@@ -159,8 +159,36 @@ signed-normal orientation test across both `remove_mins` settings is still owed.
 - **Config contract:** `fit_method` threaded through; enabled-but-unimplemented `decimate` /
   `minima` raise `NotImplementedError` instead of silently no-op'ing.
 
+## Packaging & CI (Phase 2, done 2026-07-18)
+The port is now a pip-installable package (`pyproject.toml`) with a `g3point` command-line
+entry point (`g3point/cli.py`) and a MATLAB-free unit suite (`tests/test_unit.py`, 19 tests)
+that locks in every correctness fix on synthetic inputs + the committed Otira example cloud, so
+CI has real regression coverage without the out-of-band MATLAB fixtures. `.github/workflows/
+ci.yml` runs ruff + pytest on Python 3.10-3.12; the MATLAB stage-parity oracle auto-skips when
+`G3_FIXTURE_DIR` is unset. None of this changes any numeric result.
+
+## Scale / performance (Phase 3)
+- **E2 — catchment stack builder made iterative (DONE, numerically identical).** `segment.py`
+  `add_to_stack` / `add_to_stack_bw` were recursive (one Python frame per catchment point) and
+  raised `RecursionError` on large tiles (a deep donor chain exceeds the ~1000 call-stack
+  limit). Rewritten as an explicit-stack pre-order DFS that pushes donors in reverse, so the
+  traversal order is **byte-identical** to the recursion (verified by a reference-recursion
+  unit test) — the segmentation partition stays ARI = 1.0 on every fixture. A pure refactor, not
+  a method change.
+- **E4 — neighbour search reuse: already satisfied.** The KDTree neighbour query runs once in
+  `initial_segmentation`; `cluster` / `clean` reuse `neighbors_indexes`. No change needed.
+- **E1 — dense `nlabels²` merge matrices → sparse: NOT done (deferred, with reason).** `cluster`
+  builds `D1`/`Dist`/`Nneigh`/`Aangle`/`Mmerge` as dense `nlabels²` arrays (peak ≈ several GB
+  only on multi-million-point tiles; ~5 MB on the fixtures). A sparse candidate-pair rewrite is
+  parity-critical (it must reproduce the asymmetric-DBSCAN transpose partition exactly) yet is
+  verifiable only on the four small fixtures, so shipping it blind risks the silent divergence
+  this whole effort guards against. Deferred until the port is on the critical path AND a
+  large-tile stage fixture exists as an added guard.
+- **E3 — batched border-angle SVD: NOT done (low priority).** `clean_labels` fits one small SVD
+  per grain in a loop; a CPU micro-optimisation, not a memory wall.
+
 ## Open items
 - Denoise: RESOLVED — open-source SOR (`std_ratio=3.0`), documented as a non-bit-reproducing
   substitute for `pcdenoise` (divergence #1). Remaining: state it in METHODS.md when the port
   becomes authoritative.
-- Packaging/tests/CI (Phase 2); scale work (Phase 3).
+- Scale: E1 (sparse merge matrices) + E3 (batched SVD) remain — see "Scale / performance" above.

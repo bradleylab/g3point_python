@@ -149,6 +149,49 @@ def test_compute_grains_too_few_points():
 
 
 # --------------------------------------------------------------------------------------------- #
+# E2 (scale) -- the catchment stack builder is iterative and byte-identical to the recursion it
+# replaces, and no longer overflows the call stack on deep donor chains.
+# --------------------------------------------------------------------------------------------- #
+def _recursive_bw(index, delta, di_list, local_maximum, out):
+    out.append(index)
+    for k in range(delta[index], delta[index + 1]):
+        if di_list[k] != local_maximum:
+            _recursive_bw(di_list[k], delta, di_list, local_maximum, out)
+
+
+def test_add_to_stack_bw_matches_recursion_order():
+    from g3point.segment import add_to_stack_bw
+    # tree rooted at local max 0: 1->0, 2->0, 3->1, 4->2, 5->2 (0 is its own receiver)
+    delta = np.array([0, 3, 4, 6, 6, 6, 6])
+    Di = np.array([0, 1, 2, 3, 4, 5])
+    reference = []
+    _recursive_bw(0, delta, Di, 0, reference)
+    got = []
+    add_to_stack_bw(0, delta, Di, got, 0)
+    assert got == reference == [0, 1, 3, 2, 4, 5]
+
+
+def test_add_to_stack_matches_recursion_order():
+    from g3point.segment import add_to_stack
+    n_donors = np.array([2, 1, 2, 0, 0, 0])
+    donors = np.array([[1, 2], [3, 0], [4, 5], [0, 0], [0, 0], [0, 0]])
+    got = []
+    add_to_stack(0, n_donors, donors, got)
+    assert got == [0, 1, 3, 2, 4, 5]
+
+
+def test_add_to_stack_bw_deep_chain_no_recursion_error():
+    from g3point.segment import add_to_stack_bw
+    # a single catchment 6000 points deep -- a recursive builder would blow the ~1000 call-stack
+    n = 6000
+    delta = np.arange(n + 1)          # each node i has exactly one donor at Di[i] = i + 1
+    Di = np.append(np.arange(1, n), 0)  # last node's donor is the root 0 -> skipped by the guard
+    stack = []
+    add_to_stack_bw(0, delta, Di, stack, 0)
+    assert len(stack) == n and stack[:3] == [0, 1, 2]
+
+
+# --------------------------------------------------------------------------------------------- #
 # F4 -- the .laz loader reads scaled/offset metres (lowercase x/y/z), not raw integer records
 # --------------------------------------------------------------------------------------------- #
 def test_laz_loader_reads_scaled_coordinates(tmp_path):

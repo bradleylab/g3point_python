@@ -6,24 +6,30 @@ from .tools import check_stacks
 
 
 def add_to_stack(index, n_donors, donors, stack):
-    # This recursive function adds to the stack the donors of an outlet, and then the donors of these
-    # donors, etc. Until an entire catchment is added to the stack
-
-    stack.append(index)  # add nodes to the stack
-
-    for k in range(n_donors[index]):  # find donors and add them (if any) to the stack
-        add_to_stack(donors[index, k], n_donors, donors, stack)
+    # Add an outlet's donors to the stack, then those donors' donors, etc., until the entire
+    # catchment is collected. Iterative pre-order DFS with an explicit work stack: a recursive
+    # version overflows Python's call stack on large catchments (a deep donor chain on a big
+    # tile has one frame per point). Donors are pushed in reverse so the first donor is popped
+    # first -- byte-identical traversal order to the recursion this replaces.
+    work = [index]
+    while work:
+        node = work.pop()
+        stack.append(node)
+        for k in range(n_donors[node] - 1, -1, -1):
+            work.append(donors[node, k])
 
 
 def add_to_stack_bw(index, delta, Di, stack, local_maximum):
-    # This recursive function adds to the stack the donors of an outlet, and then the donors of these
-    # donors, etc. Until an entire catchment is added to the stack
-
-    stack.append(index)  # add nodes to the stack
-
-    for k in range(delta[index], delta[index + 1]):  # find donors and add them (if any) to the stack
-        if Di[k] != local_maximum:  # avoid infinite loop
-            add_to_stack_bw(Di[k], delta, Di, stack, local_maximum)
+    # Braun & Willett catchment collection, iterative for the same reason as add_to_stack (a
+    # recursive version overflows the call stack on large catchments). Pushing donors in reverse
+    # reproduces the recursion's exact pre-order sequence.
+    work = [index]
+    while work:
+        node = work.pop()
+        stack.append(node)
+        for k in range(delta[node + 1] - 1, delta[node] - 1, -1):
+            if Di[k] != local_maximum:  # avoid the local-maximum self-loop
+                work.append(Di[k])
 
 
 def philippe_steer_stack_building(receivers, local_maximum_indexes, knn):
