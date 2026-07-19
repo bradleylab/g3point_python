@@ -59,6 +59,10 @@ def statistical_outlier_removal(xyz: np.ndarray,
     kept_indexes : (m,) int array
         Indices of the retained points into the input `xyz` (ascending).
     """
+    if int(n_neighbors) < 1:
+        raise ValueError(f"n_neighbors must be >= 1, got {n_neighbors}")
+    if not np.isfinite(std_ratio) or std_ratio < 0:
+        raise ValueError(f"std_ratio must be finite and >= 0, got {std_ratio}")
     xyz = np.asarray(xyz, dtype=float)
     if len(xyz) <= n_neighbors + 1:
         return xyz, np.arange(len(xyz))

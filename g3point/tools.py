@@ -30,18 +30,40 @@ def get_random_colors(number_of_colors, version=None):
     return rgb
 
 
+def _output_header(cloud, xyz):
+    """LAS header for the output cloud, with an explicit precision + CRS policy.
+
+    laspy's default scales (0.01) quantise coordinates to 1 cm and carry no CRS, silently degrading
+    georeferenced output. Inherit scales/offsets/CRS from a LAS/LAZ source; for a PLY source (no
+    header) use a 1 mm scale with data-min offsets so coordinates survive the LAS integer encoding.
+    """
+    header = laspy.LasHeader(point_format=7, version="1.4")
+    if os.path.splitext(cloud)[-1].lower() in ('.las', '.laz'):
+        with laspy.open(cloud) as reader:
+            src = reader.header
+        header.scales = src.scales
+        header.offsets = src.offsets
+        try:  # preserve the coordinate reference system if the source carries one
+            crs = src.parse_crs()
+            if crs is not None:
+                header.add_crs(crs)
+        except Exception:  # pragma: no cover - CRS copy is best-effort, never fatal to a save
+            pass
+    else:
+        header.scales = np.array([0.001, 0.001, 0.001])   # 1 mm
+        header.offsets = np.min(xyz, axis=0)
+    return header
+
+
 def save_data_with_colors(cloud, xyz, stacks, labels, tag):
     head, tail = os.path.split(cloud)
     root, ext = os.path.splitext(tail)
     filename = os.path.join(head, root + tag + '.laz')
 
-    # scale data to avoid loss of accuracy with LAS format
     x, y, z = np.split(xyz, 3, axis=1)
 
-    # 1. Create a new header
-    header = laspy.LasHeader(point_format=7, version="1.4")
-
-    # 2. Create a Las
+    # header carries an explicit precision + CRS policy (see _output_header)
+    header = _output_header(cloud, xyz)
     las = laspy.LasData(header)
 
     las.x = np.squeeze(x)

@@ -316,6 +316,55 @@ def test_sor_removes_isolated_outlier():
     assert len(kept_idx) >= 495                           # the bulk is retained
 
 
+def test_sor_rejects_bad_parameters():
+    from g3point.denoise import statistical_outlier_removal
+    xyz = np.random.default_rng(0).random((50, 3))
+    for bad in (dict(n_neighbors=0), dict(std_ratio=-1.0), dict(std_ratio=np.nan)):
+        with pytest.raises(ValueError):
+            statistical_outlier_removal(xyz, **bad)
+
+
+# --------------------------------------------------------------------------------------------- #
+# LAZ export preserves precision (P1-LAZ-EXPORT): a PLY source uses a 1 mm policy, not laspy's
+# 1 cm default, so coordinates survive the round trip.
+# --------------------------------------------------------------------------------------------- #
+def test_laz_export_preserves_precision(tmp_path):
+    from g3point.tools import load_data, save_data_with_colors
+    cloud = str(tmp_path / "src.ply")                    # PLY source -> 1 mm precision policy
+    xyz = np.array([[100.000, 200.000, 300.000],
+                    [100.003, 200.007, 300.011],
+                    [100.015, 200.024, 300.042]])
+    out = save_data_with_colors(cloud, xyz, [[0, 1, 2]], np.array([0, 0, 0]), "_T")
+    back = load_data(out)
+    assert np.allclose(back, xyz, atol=6e-4)             # ~1 mm; laspy's 0.01 default would lose 1 cm
+
+
+# --------------------------------------------------------------------------------------------- #
+# Quaternion is consistent with the reordered rotation (P2-QUATERNION) and does not raise.
+# --------------------------------------------------------------------------------------------- #
+def test_quaternion_matches_reordered_rotation():
+    from scipy.spatial.transform import Rotation
+    from g3point.ellipsoid import explicit_to_implicit, implicit_to_explicit
+    center, radii = np.zeros(3), np.array([3.0, 2.0, 1.4])
+    p = explicit_to_implicit(center, radii, _orthonormal_rows(seed=5))
+    _c, _r, quat, R = implicit_to_explicit(p, ignore_quaternions=False)
+    assert quat is not None
+    ref = np.real(R).astype(float)
+    if np.linalg.det(ref) < 0:                           # the quaternion encodes the right-handed frame
+        ref = ref.copy()
+        ref[2] = -ref[2]
+    assert np.allclose(Rotation.from_quat(quat).as_matrix(), ref, atol=1e-6)
+
+
+def test_cli_json_emits_null_for_empty_percentiles():
+    import json
+    from g3point.grains import percentiles
+    pct = percentiles(np.array([]))                      # all NaN
+    pct_json = {k: (v if v == v else None) for k, v in pct.items()}
+    doc = json.dumps({"percentiles_m": pct_json}, allow_nan=False)   # must not raise on NaN
+    assert json.loads(doc)["percentiles_m"]["D50"] is None
+
+
 # --------------------------------------------------------------------------------------------- #
 # End-to-end smoke test on the committed Otira example (F2d frame separation + provenance).
 # Needs open3d + the committed PLY; skips only if the example cloud is missing.

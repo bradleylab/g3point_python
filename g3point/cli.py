@@ -9,6 +9,7 @@ labelled `_G3POINT.laz` / `_G3POINT_SINKS.laz` next to the input cloud.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 
@@ -37,25 +38,29 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
-    g = G3Point(args.cloud, args.ini, remove_mins=not args.no_min_shift)
-    result = g.run(version=args.version, run_seed=args.seed)
-    gsd = g.grain_size_distribution()
+    # The constructor and pipeline print progress to stdout; when emitting JSON, route ALL of that
+    # to stderr so stdout carries ONLY the JSON document (otherwise it is not parseable).
+    with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
+        g = G3Point(args.cloud, args.ini, remove_mins=not args.no_min_shift)
+        result = g.run(version=args.version, run_seed=args.seed)
+        gsd = g.grain_size_distribution()
+        if args.save:
+            g.save()
 
     n_grains = sum(1 for grain in result.grains if grain.fitok)
     n_kept = len(gsd)
     pct = percentiles(gsd)
 
-    if args.save:
-        g.save()
-
     if args.json:
+        # NaN (empty percentiles) is not valid JSON -> emit null instead.
+        pct_json = {k: (v if v == v else None) for k, v in pct.items()}
         payload = {
             "n_grains_fit": n_grains,
             "n_grains_in_gsd": n_kept,
-            "percentiles_m": pct,
+            "percentiles_m": pct_json,
             "provenance": result.provenance,
         }
-        json.dump(payload, sys.stdout, indent=2, default=float)
+        json.dump(payload, sys.stdout, indent=2, allow_nan=False, default=float)
         sys.stdout.write("\n")
     else:
         print(f"grains fit: {n_grains}   in GSD (fitok & aqualityok): {n_kept}")

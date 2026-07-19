@@ -155,6 +155,14 @@ class G3Point:
             n_points_analysis=int(len(self.xyz)))
 
     def initial_segmentation(self):
+        # After invalid-point removal + denoise there must be more than knn points, else the
+        # knn+1 neighbour query (and everything downstream) is ill-defined. Fail with a clear
+        # message rather than deep inside the KDTree.
+        if len(self.xyz) <= self.params.knn:
+            raise ValueError(
+                f"only {len(self.xyz)} points remain (after invalid removal + denoise); "
+                f"need > knn={self.params.knn} for segmentation. Loosen the denoise threshold "
+                f"or lower knn.")
         # Neighbours / surface / normals on the ANALYSIS frame (MATLAB uses ptCloud.Location).
         tree = KDTree(self.xyz)
         neighbors_distances, neighbors_indexes = tree.query(self.xyz, self.params.knn + 1)

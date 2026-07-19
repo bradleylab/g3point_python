@@ -132,11 +132,22 @@ def implicit_to_explicit(p, ignore_quaternions=True):
     radii = radii[index_array]
     rotation_matrix = rotation_matrix[index_array, :]
 
-    # convert rotation matrix to quaternions
+    # Convert to a quaternion from the FINAL (reordered) rotation, not the stale unreordered
+    # eigenvectors -- otherwise the quaternion describes a different orientation than the returned
+    # rotation_matrix. Enforce a right-handed frame (det +1) so from_matrix never raises on the
+    # sign-free eigenvectors; a genuinely complex fit has no real rotation -> no quaternion.
     if ignore_quaternions:
         quaternions = None
     else:
-        quaternions = scipy.spatial.transform.Rotation.from_matrix(eigenvectors).as_quat()
+        rm = np.asarray(rotation_matrix)
+        if np.iscomplexobj(rm) and np.max(np.abs(rm.imag)) > 1e-9:
+            quaternions = None
+        else:
+            r = np.real(rm).astype(float)
+            if np.linalg.det(r) < 0:
+                r = r.copy()
+                r[2] = -r[2]
+            quaternions = scipy.spatial.transform.Rotation.from_matrix(r).as_quat()
 
     return center, radii, quaternions, rotation_matrix
 
