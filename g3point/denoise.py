@@ -22,11 +22,16 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial import cKDTree
 
-# Defaults chosen to maximise inlier concordance with MATLAB pcdenoise across the fixture
-# tiles (min Jaccard ~0.99). They are an empirical approximation, certified downstream at the
-# GSD level, NOT a claim of pcdenoise equivalence.
+# Default denoise strength. This is a plain parameter (like knn or rad_factor) that a user
+# overrides in the .ini per run (denoise_n_neighbors / denoise_std_ratio); it is NOT tuned to
+# reproduce MATLAB pcdenoise. At these defaults SOR removes ~1-1.5% of points on the bed tiles,
+# all sitting >5x farther from their neighbours than the median point (genuine isolated
+# outliers). std_ratio=3.0 (vs a tighter 2.0-2.5) is deliberately conservative given the small
+# neighbour count: it removes only clear outliers and avoids trimming legitimately-sparse grain
+# edges. See PARITY.md divergence #1 -- this is an open-source substitute for pcdenoise and does
+# not reproduce it bit-for-bit.
 DEFAULT_N_NEIGHBORS = 4
-DEFAULT_STD_RATIO = 2.5
+DEFAULT_STD_RATIO = 3.0
 
 
 def statistical_outlier_removal(xyz: np.ndarray,

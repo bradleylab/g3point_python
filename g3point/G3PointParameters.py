@@ -1,5 +1,7 @@
 import configparser
 
+from .denoise import DEFAULT_N_NEIGHBORS, DEFAULT_STD_RATIO
+
 
 class G3PointParameters:
     def __init__(self, ini):
@@ -31,7 +33,9 @@ class G3PointParameters:
         self.n_axis = params.getint('n_axis')
         self.n_min = params.getint('n_min')
         self.dx_gbn = params.getfloat('dx_gbn')
-        # Denoise SOR parameters (optional in the .ini; defaults are the fixture-tuned values).
-        # SOR is a documented approximation of MATLAB pcdenoise -- see PARITY.md divergence #1.
-        self.denoise_n_neighbors = params.getint('denoise_n_neighbors', fallback=4)
-        self.denoise_std_ratio = params.getfloat('denoise_std_ratio', fallback=2.5)
+        # Denoise SOR parameters (optional in the .ini; single-sourced defaults from denoise.py).
+        # SOR is an open-source substitute for MATLAB pcdenoise -- see PARITY.md divergence #1.
+        self.denoise_n_neighbors = params.getint('denoise_n_neighbors',
+                                                 fallback=DEFAULT_N_NEIGHBORS)
+        self.denoise_std_ratio = params.getfloat('denoise_std_ratio',
+                                                 fallback=DEFAULT_STD_RATIO)

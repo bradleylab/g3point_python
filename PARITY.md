@@ -76,24 +76,34 @@ robust-spread) algorithm in the same family, not just different parameters.
   tolerance), NOT bit-exact denoise. Rationale: denoise touches ~1–2% of points as outlier
   pre-filtering; most disputed points are absorbed into a grain or removed by the downstream
   small/flat filters anyway. This is an *empirical* claim to be verified, not assumed.
-- **Retained- vs removed-set concordance.** Retained-set Jaccard (~0.99) is misleading — it
-  is dominated by the many points both keep. The discriminating **removed-set Jaccard is
-  0.21–0.84** across fixtures (e.g. 041: SOR removes 52, MATLAB 11 → 0.21). Both are reported
-  by the harness (Stage 0a).
-- **QUANTIFIED downstream effect (end-to-end vs MATLAB `granulo`, Stage 5).** With the refactor
-  correct (feeding MATLAB's exact partition reproduces `granulo` to sub-mm), the SOR-vs-
-  pcdenoise difference moves the GSD as follows: tiles 040/041/047 match to **≤9 mm on
-  D16/D50/D84** (incl. the 218-grain tile 047: dD84 = +1 mm), BUT the smallest tile 043 (29
-  grains) misses **dD84 = −93 mm** because the different denoise dropped one large grain.
-  So the divergence is negligible at aggregate/reach scale but introduces **coarse-tail
-  sensitivity on small samples** — cell-level D84 on sparse spatial cells can be affected.
-  Aggregate D-tolerance alone is insufficient; grain counts, fit failures, and held-out tiles
-  must be checked (the current k=4,t=2.5 was tuned on these fixtures).
-- **How to report it:** METHODS must state the port uses SOR and is ~99% (retained) / 0.2–0.8
-  (removed) concordant with MATLAB `pcdenoise` — it must **not** claim to replicate it.
-- **Status:** implemented (`denoise.py`, wired into `G3Point.run`). Open: held-out validation
-  and a decision on whether the small-sample coarse-tail sensitivity is acceptable for the
-  spatial GSD mapping, or whether `pcdenoise` must be ported exactly.
+- **RESOLUTION (2026-07-18, operator).** The port uses standard statistical outlier removal
+  (SOR) as a deliberate **open-source substitute** for the proprietary `pcdenoise`, keeping
+  everything else identical. Neither denoiser is "more correct"; we do NOT try to reproduce
+  `pcdenoise` bit-for-bit and we do NOT tune SOR to match MATLAB's output. `std_ratio` /
+  `n_neighbors` are ordinary parameters a user sets in the `.ini` per run (defaults in
+  `denoise.py`, single-sourced into `G3PointParameters`).
+- **Default: `n_neighbors=4`, `std_ratio=3.0`.** Chosen on denoise merit, not to match MATLAB:
+  at these values SOR removes ~1–1.5% of points, all sitting >5× farther from their neighbours
+  than the median point (genuine isolated outliers, NOT grain-surface points). `std_ratio=3.0`
+  is deliberately conservative for the small `n_neighbors=4` statistic (a tighter 2.0–2.5 can
+  clip legitimately-sparse grain edges). (An earlier note calling 2.5 "too aggressive / 6%
+  removal" was wrong — that 6% was Open3D SOR at `std_ratio=1.0`, a different config.)
+- **Resulting difference from MATLAB (informational, NOT a target).** Because SOR ≠ `pcdenoise`,
+  the two remove different ~1–2% subsets (removed-set Jaccard 0.21–0.84) and the port's GSD runs
+  slightly FINER. Held-out (40 random B4 tiles, excluding the calibration tiles; port end-to-end
+  vs existing MATLAB `granulo`) at `std_ratio=3.0`: dD50 median **−0.8 mm** (IQR −2.6..0.0),
+  dD84 median **−3.4 mm** (IQR −10.7..+1.6; 3/40 tiles >20 mm at D84 — small-sample coarse-tail
+  cases). This is the expected difference between two legitimate denoisers, quantified and
+  documented — not a defect. (Reproduce: `scripts/b4_denoise_holdout.py`,
+  `scripts/b4_denoise_stdsweep.py`.)
+- **This is the ONLY algorithmic substitution in the pipeline.** Every other G3Point parameter
+  is used identically to MATLAB (same `.ini`), and normals match MATLAB `pcnormals` to 0.000°,
+  so the port reproduces MATLAB by construction everywhere except this one documented step.
+- **How to report it:** METHODS states the port denoises with SOR (stating `n_neighbors` /
+  `std_ratio`) as an open-source substitute for `pcdenoise` that does not reproduce it
+  bit-for-bit; the two agree on ~99% of retained points and the port's GSD runs a few mm finer.
+- **Status:** RESOLVED and implemented. Open (minor): document the SOR choice in METHODS.md when
+  the port becomes the authoritative path.
 
 ### 2. Acover / Aqualityok fit-quality test — stochastic
 `Acover` samples 200 random points on each fitted ellipsoid's surface, so the per-grain value
@@ -150,7 +160,7 @@ signed-normal orientation test across both `remove_mins` settings is still owed.
   `minima` raise `NotImplementedError` instead of silently no-op'ing.
 
 ## Open items
-- Held-out-tile validation of the denoise (params were tuned on the current fixtures), and the
-  decision on the small-sample coarse-tail sensitivity (divergence #1) — port `pcdenoise`
-  exactly, or accept SOR for reach-scale GSD.
+- Denoise: RESOLVED — open-source SOR (`std_ratio=3.0`), documented as a non-bit-reproducing
+  substitute for `pcdenoise` (divergence #1). Remaining: state it in METHODS.md when the port
+  becomes authoritative.
 - Packaging/tests/CI (Phase 2); scale work (Phase 3).
