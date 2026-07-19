@@ -31,6 +31,7 @@ from g3point import segment, cluster as cluster_stage, clean  # noqa: E402
 from g3point.cluster import merge_labels_dbscan  # noqa: E402
 from g3point.ellipsoid import fit_ellipsoid_to_grain  # noqa: E402
 from g3point.quality import acover  # noqa: E402
+from g3point.G3Point import SENSOR_HEIGHT  # noqa: E402
 
 FIXTURE_DIR = Path(os.environ.get(
     "G3_FIXTURE_DIR",
@@ -41,6 +42,29 @@ PARITY_SEED = 42  # seed the stochastic Acover sampler so ablations are comparab
 
 def load_fixture(path: Path):
     return sio.loadmat(path, squeeze_me=True, struct_as_record=False)
+
+
+def canonical_partition(labels: np.ndarray) -> np.ndarray:
+    """Relabel a partition by first-appearance order; -1 (unlabelled) stays -1.
+
+    Two partitions are IDENTICAL iff their canonical forms are array-equal -- an exact check,
+    stronger than ARI>=0.9999 (which tolerates a swapped point and does not pin the unlabelled set).
+    """
+    labels = np.asarray(labels).ravel()
+    out = np.full(labels.shape, -1, dtype=int)
+    remap: dict[int, int] = {}
+    for i, lab in enumerate(labels):
+        lab = int(lab)
+        if lab == -1:
+            continue
+        if lab not in remap:
+            remap[lab] = len(remap)
+        out[i] = remap[lab]
+    return out
+
+
+def partitions_equal(a: np.ndarray, b: np.ndarray) -> bool:
+    return np.array_equal(canonical_partition(a), canonical_partition(b))
 
 
 def params_from_meta(meta) -> SimpleNamespace:
@@ -89,12 +113,17 @@ def check_normals(fx) -> dict:
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(xyz)
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamKNN(knn))
+    # Orient toward the sensor the PRODUCTION code uses: SENSOR_HEIGHT (10000) above the cloud
+    # floor, not an ad-hoc 1000 -- otherwise the test could pass while the shipped orientation is
+    # wrong.
     c = np.mean(xyz, axis=0)
-    n_py = orient_normals(xyz, np.asarray(pcd.normals), np.array([c[0], c[1], 1000.0]))
-    dots = np.clip(np.sum(n_py * n_ml, axis=1), -1, 1)
-    ang = np.degrees(np.arccos(np.abs(dots)))  # |dot|: normals share orientation, allow sign
+    sensor = np.array([c[0], c[1], float(np.amin(xyz[:, 2])) + SENSOR_HEIGHT])
+    n_py = orient_normals(xyz, np.asarray(pcd.normals), sensor)
+    dots = np.clip(np.sum(n_py * n_ml, axis=1), -1, 1)   # SIGNED: a reversed normal must NOT pass
+    ang = np.degrees(np.arccos(dots))
     return {"stage": "normals", "median_deg": float(np.median(ang)),
-            "p99_deg": float(np.percentile(ang, 99)), "frac_gt5deg": float(np.mean(ang > 5))}
+            "p99_deg": float(np.percentile(ang, 99)), "frac_gt5deg": float(np.mean(ang > 5)),
+            "frac_flipped": float(np.mean(dots < 0))}
 
 
 # --------------------------------------------------------------------------- #
@@ -117,7 +146,7 @@ def check_segmentation(fx) -> dict:
     # is NOT comparable to the port's segmentation seeds -- a sink metric here is meaningless.
     return {"stage": "segment", "ari": ari,
             "n_ml": int(fx["meta"].nlabels_seg), "n_py": len(stacks_py),
-            "ndon_exact": ndon_match}
+            "ndon_exact": ndon_match, "labels_py": labels_py, "labels_ml": labels_ml}
 
 
 # --------------------------------------------------------------------------- #
@@ -156,10 +185,12 @@ def _labels_to_partition(labels_ml_raw) -> np.ndarray:
 
 
 def check_cluster_stage(fx, params) -> dict:
-    # The fixture's segmentation partition is bit-exact to the port's (Stage 1 ARI=1.0),
-    # so feed the port's own mutually-consistent seg outputs (its label numbering, ndon,
-    # and sink seeds) and test whether the CLUSTER stage reproduces MATLAB's cluster
-    # partition. F2d: cluster/clean run on the original (denoised) frame, not detrended.
+    # Feeds the port's own seg outputs (label numbering, ndon, sink seeds). This is NOT a
+    # contamination: Stage 1 proves the port's segmentation partition is EXACTLY equal to MATLAB's
+    # (test_segmentation_partition asserts canonical-partition equality, not just ARI), so
+    # cluster(seg_port) == cluster(seg_matlab). The fixture's own segmentation-stage sink seeds are
+    # unusable anyway (the exporter overwrote `isink` with the post-clean array). F2d: cluster/clean
+    # run on the original (denoised) frame, not detrended.
     xyz = fx["xyz_denoised"]
     neigh0 = fx["indNeighbors"].astype(int) - 1
     surface = fx["surface"].astype(float)
@@ -170,10 +201,11 @@ def check_cluster_stage(fx, params) -> dict:
     new_labels, _stk, _snk = cluster_stage(
         xyz, params, neigh0, labels0, stacks0, ndon0, sink0, surface, normals,
         version="matlab_dbscan")
-    ari = adjusted_rand_score(fx["labels_cl"].astype(int) - 1, new_labels)
+    ml = fx["labels_cl"].astype(int) - 1
+    ari = adjusted_rand_score(ml, new_labels)
     return {"stage": "cluster", "ari": ari,
             "n_ml": int(fx["meta"].nlabels_cluster),
-            "n_py": len(np.unique(new_labels))}
+            "n_py": len(np.unique(new_labels)), "labels_py": new_labels, "labels_ml": ml}
 
 
 def check_clean_stage(fx, params) -> dict:
@@ -192,11 +224,13 @@ def check_clean_stage(fx, params) -> dict:
     except ValueError as e:
         return {"stage": "clean", "ari": float("nan"), "crash": str(e)[:40],
                 "n_ml": int(fx["meta"].nlabels_clean), "n_py": -1}
-    ari = adjusted_rand_score(_labels_to_partition(fx["labels_clean"]),
-                              _labels_to_partition(labels_out + 1))
+    ml = _labels_to_partition(fx["labels_clean"])
+    py = _labels_to_partition(labels_out + 1)
+    ari = adjusted_rand_score(ml, py)
     return {"stage": "clean", "ari": ari, "crash": "",
             "n_ml": int(fx["meta"].nlabels_clean),
-            "n_py": len(np.unique(labels_out[labels_out != -1]))}
+            "n_py": len(np.unique(labels_out[labels_out != -1])),
+            "labels_py": py, "labels_ml": ml}
 
 
 # --------------------------------------------------------------------------- #
@@ -209,16 +243,20 @@ def check_ellipsoids(fx) -> dict:
     radii_ml = np.atleast_2d(fx["radii"])        # (3, nlab)
     R_ml = np.atleast_2d(fx["Rmats"])            # (9, nlab)
     acover_ml = np.atleast_1d(fx["acover"]).astype(float)
+    fitok_ml = np.atleast_1d(fx["fitok"]).astype(bool)
     thresh = float(fx["meta"].param.Aquality_thresh)
     rng = np.random.default_rng(PARITY_SEED)
 
-    radii_relerr, R_fro, acov_abs, aq_agree, n_fit = [], [], [], [], 0
+    radii_relerr, R_fro, acov_abs, aq_agree, n_fit, ml_fit_missed = [], [], [], [], 0, 0
     for k in range(nlab):
         stack = np.where(np.nan_to_num(labels_clean, nan=-1).astype(int) == (k + 1))[0]
+        ml_is_fit = bool(fitok_ml[k]) if k < fitok_ml.size else False
         if stack.size < 4:
+            ml_fit_missed += ml_is_fit
             continue
         center, radii, _q, Rm, _ep = fit_ellipsoid_to_grain(xyz[stack, :])
         if center is None:
+            ml_fit_missed += ml_is_fit  # MATLAB fit this grain but the port failed -> a real gap
             continue
         n_fit += 1
         # radii: both sorted desc; relative error on b-axis (middle) — the GSD axis
@@ -233,7 +271,7 @@ def check_ellipsoids(fx) -> dict:
         av = acover(xyz[stack, :], center, radii, Rm, n=200, rng=rng)
         acov_abs.append(abs(av - acover_ml[k]) if np.isfinite(acover_ml[k]) else np.nan)
         aq_agree.append((av > thresh) == (acover_ml[k] > thresh))
-    return {"stage": "ellipsoid", "n_fit": n_fit, "n_ml": nlab,
+    return {"stage": "ellipsoid", "n_fit": n_fit, "n_ml": nlab, "ml_fit_missed": int(ml_fit_missed),
             "baxis_relerr_med": float(np.nanmedian(radii_relerr)) if radii_relerr else np.nan,
             "R_frobenius_med": float(np.nanmedian(R_fro)) if R_fro else np.nan,
             "acover_absdiff_med": float(np.nanmedian(acov_abs)) if acov_abs else np.nan,
@@ -395,21 +433,31 @@ if pytest is not None:
         return load_fixture(request.param)
 
     def test_normals_parity(fx):
-        assert check_normals(fx)["p99_deg"] < 0.1
+        r = check_normals(fx)
+        assert r["p99_deg"] < 0.1               # signed angle (a reversed normal would fail here)
+        assert r["frac_flipped"] < 1e-3         # essentially no reversed normals vs MATLAB
 
     def test_segmentation_partition(fx):
-        assert check_segmentation(fx)["ari"] >= 0.9999
+        r = check_segmentation(fx)
+        assert r["ari"] >= 0.9999
+        assert partitions_equal(r["labels_py"], r["labels_ml"])   # EXACT, not just ARI
 
     def test_cluster_partition(fx):
-        assert check_cluster_stage(fx, params_from_meta(fx["meta"]))["ari"] >= 0.9999
+        r = check_cluster_stage(fx, params_from_meta(fx["meta"]))
+        assert r["ari"] >= 0.9999
+        assert partitions_equal(r["labels_py"], r["labels_ml"])   # EXACT
 
     def test_clean_partition(fx):
-        assert check_clean_stage(fx, params_from_meta(fx["meta"]))["ari"] >= 0.9999
+        r = check_clean_stage(fx, params_from_meta(fx["meta"]))
+        assert r["ari"] >= 0.9999
+        assert partitions_equal(r["labels_py"], r["labels_ml"])   # EXACT (incl. the unlabelled set)
 
     def test_ellipsoid_geometry(fx):
         r = check_ellipsoids(fx)
         assert r["R_frobenius_med"] < 1e-4      # rotation matches MATLAB (F2a bug was 0.3-0.5)
         assert r["baxis_relerr_med"] < 1e-3     # b-axis radius matches
+        assert r["ml_fit_missed"] == 0          # every grain MATLAB fit, the port also fits
+        assert r["aqualityok_agree"] >= 0.9     # Aqualityok decision agrees (stochastic ~0.92-1.0)
 
     def test_grains_on_matlab_partition(fx):
         """Tight deterministic gate: the port's GSD on MATLAB's exact clean partition must
