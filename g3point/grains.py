@@ -99,6 +99,14 @@ def compute_grains(xyz: np.ndarray, stacks, source_indexes: np.ndarray,
             grains.append(GrainResult(fitok=False, fail_reason="fit_not_positive_definite", **base))
             continue
 
+        # A marginal quadric fit can return COMPLEX radii/rotation (sqrt of a slightly-negative or
+        # complex eigenvalue). That is not a real ellipsoid -- feeding it to Acover crashes the
+        # tile. Cast away numerical-noise imaginary parts; a genuinely-complex fit is a failed grain.
+        center, radii, rotation = _real(center), _real(radii), _real(rotation)
+        if center is None or radii is None or rotation is None:
+            grains.append(GrainResult(fitok=False, fail_reason="fit_not_real", **base))
+            continue
+
         rng = grain_rng(run_seed, src)
         cover = acover(pts, center, radii, rotation, rng=rng)
         grains.append(GrainResult(
@@ -106,6 +114,22 @@ def compute_grains(xyz: np.ndarray, stacks, source_indexes: np.ndarray,
             rotation=np.asarray(rotation), acover=cover,
             aqualityok=bool(cover > a_quality_thresh), **base))
     return grains
+
+
+def _real(arr, imag_tol: float = 1e-9):
+    """Return `arr` as a real, finite array; None if it is genuinely complex or non-finite.
+
+    Tiny imaginary parts (|imag| <= imag_tol * scale) are numerical noise from a general eigen
+    solve on a symmetric form and are dropped; a real imaginary component means the fitted quadric
+    is not a real ellipsoid, so the grain is a failed fit (mirrors MATLAB's fitok filter).
+    """
+    a = np.asarray(arr)
+    if np.iscomplexobj(a):
+        scale = float(np.max(np.abs(a.real))) + 1e-12
+        if np.max(np.abs(a.imag)) > imag_tol * scale:
+            return None
+        a = a.real
+    return a if np.all(np.isfinite(a)) else None
 
 
 def grain_size_distribution(grains: list[GrainResult]) -> np.ndarray:

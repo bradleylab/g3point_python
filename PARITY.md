@@ -151,7 +151,15 @@ signed-normal orientation test across both `remove_mins` settings is still owed.
 - **Typed per-grain table** (`grains.py`, `GrainResult`): separate `point_centroid` and fitted
   `ellipsoid_center` (MATLAB `centers` = the fitted centre, compare to that), source-point
   index mapping preserved through invalid-point removal + denoise, Optional fields for failed
-  fits with verified `fail_reason` (`too_few_points` / `fit_not_positive_definite`).
+  fits with verified `fail_reason` (`too_few_points` / `fit_not_positive_definite` / `fit_not_real`).
+- **`fit_not_real` robustness guard.** A marginal quadric fit can return COMPLEX radii/rotation
+  (sqrt of a slightly-negative/complex eigenvalue from the general eigen solve). Feeding a complex
+  ellipsoid to `Acover` crashes the tile (`cKDTree` rejects complex input) — observed on ~40% of
+  real field tiles. `compute_grains` now casts numerical-noise imaginary parts to real
+  (`|imag| <= 1e-9 * scale`) and marks a genuinely-complex fit as a failed grain (`fit_not_real`),
+  mirroring MATLAB's `fitok` filter. **Parity caveat:** if MATLAB instead keeps such grains (real
+  part), the port drops a few degenerate fits MATLAB retains — these are near-degenerate ellipsoids
+  that `Aqualityok` would usually reject anyway; the full-sweep `dpsi` quantifies whether it matters.
 - **GSD** filters on `fitok & aqualityok` ONLY — no `min_diam` cut (matches
   `grainsizedistribution.m`; `min_diam` belongs to the grid-by-number workflow).
 - **Acover RNG** is a deterministic per-grain stream keyed on the grain's source-point indexes

@@ -141,6 +141,18 @@ def test_compute_grains_degenerate_is_failed_not_error():
     assert grains[0].fitok is False and grains[0].fail_reason == "degenerate_input"
 
 
+def test_real_guard_drops_complex_keeps_noise():
+    # A marginal quadric fit can return complex radii; _real drops a genuinely-complex fit but
+    # keeps one whose imaginary part is only numerical noise (casting to the real part).
+    from g3point.grains import _real
+    assert _real(np.array([3.0, 2.0, 1.0])) is not None
+    noise = np.array([3.0 + 1e-13j, 2.0 + 0j, 1.0 - 1e-13j])
+    got = _real(noise)
+    assert got is not None and np.allclose(got, [3.0, 2.0, 1.0]) and not np.iscomplexobj(got)
+    assert _real(np.array([3.0 + 0.5j, 2.0, 1.0])) is None      # real imaginary component
+    assert _real(np.array([np.inf, 2.0, 1.0])) is None          # non-finite
+
+
 def test_compute_grains_too_few_points():
     from g3point.grains import compute_grains
     xyz = np.random.default_rng(0).random((3, 3))
