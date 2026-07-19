@@ -1,7 +1,15 @@
 *.pyc
+__pycache__/
 
 .idea/
 /.idea
+
+# Local environments / build / test caches
+.venv*/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
 matlab/Wolman_for_G3P_MAJ_janvier2025.asv
 *.mat
 *.pkl

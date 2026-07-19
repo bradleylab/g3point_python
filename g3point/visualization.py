@@ -1,7 +1,5 @@
 # inspired by add_geometry.py from Open3D
 
-import numpy as np
-
 import open3d as o3d
 import open3d.visualization.gui as gui
 import open3d.visualization.rendering as rendering

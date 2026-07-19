@@ -2,8 +2,6 @@
 #  Levente Hunyadi (2024). Fitting quadratic curves and surfaces
 #  (https://www.mathworks.com/matlabcentral/fileexchange/45356-fitting-quadratic-curves-and-surfaces),
 #  MATLAB Central File Exchange. Retrieved March 21, 2024.
-from operator import index
-
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.ticker import LinearLocator

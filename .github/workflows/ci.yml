@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # open3d ships wheels for these; the port imports open3d at package load.
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Create env and install package
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install -e ".[test]"
+
+      - name: Lint
+        run: uv run ruff check g3point tests
+
+      - name: Test (MATLAB-free unit suite; stage-parity oracle auto-skips without fixtures)
+        run: uv run pytest -v

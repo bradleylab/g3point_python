@@ -28,7 +28,7 @@ from sklearn.metrics import adjusted_rand_score
 # import the port under test (the fork clone that contains this tests/ dir)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from g3point import segment, cluster as cluster_stage, clean  # noqa: E402
-from g3point.cluster import merge_labels_dbscan, get_sink_indexes  # noqa: E402
+from g3point.cluster import merge_labels_dbscan  # noqa: E402
 from g3point.ellipsoid import fit_ellipsoid_to_grain  # noqa: E402
 from g3point.quality import acover  # noqa: E402
 
@@ -208,7 +208,6 @@ def check_ellipsoids(fx) -> dict:
     nlab = int(fx["meta"].nlabels_clean)
     radii_ml = np.atleast_2d(fx["radii"])        # (3, nlab)
     R_ml = np.atleast_2d(fx["Rmats"])            # (9, nlab)
-    fitok_ml = np.atleast_1d(fx["fitok"]).astype(bool)
     acover_ml = np.atleast_1d(fx["acover"]).astype(float)
     thresh = float(fx["meta"].param.Aquality_thresh)
     rng = np.random.default_rng(PARITY_SEED)

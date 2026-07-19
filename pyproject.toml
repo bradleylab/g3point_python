@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g3point"
+version = "0.2.0"
+description = "Granulometry from 3D point clouds (G3Point), Python port with verified MATLAB parity"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Philippe Steer" },
+    { name = "Paul Leroy" },
+]
+maintainers = [
+    { name = "Alexander Bradley", email = "abradley@wustl.edu" },
+]
+keywords = ["granulometry", "grain-size", "point-cloud", "lidar", "geomorphology"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "laspy",
+    "lazrs",
+    "tqdm",
+    "open3d",
+    "scikit-learn",
+]
+
+[project.optional-dependencies]
+# Test/dev extras. The MATLAB stage-parity fixtures (tests/test_stage_parity.py) are provided
+# out-of-band and auto-skip when absent, so `pytest` runs the MATLAB-free unit suite anywhere.
+test = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+g3point = "g3point.cli:main"
+
+[project.urls]
+"Homepage" = "https://github.com/bradleylab/g3point_python"
+"Upstream (MATLAB)" = "https://github.com/philippesteer/G3Point"
+
+[tool.setuptools]
+# Ship only the importable package; the root-level Spyder scratch scripts are not packaged.
+packages = ["g3point"]
+
+[tool.pytest.ini_options]
+# Only collect the real test package. The g3point/test_*.py files are upstream scratch stubs
+# (they import unavailable modules and are not tests); do not let pytest discover them.
+testpaths = ["tests"]
+
+[tool.ruff]
+# Lint the importable package + the test suite. The root scratch scripts and the in-package
+# test_*.py stubs are upstream exploratory code and are not held to the lint gate.
+extend-exclude = [
+    "g3point/test_cc_density.py",
+    "g3point/test_inertia_fit.py",
+    "g3point/test_matplotlib.py",
+    "g3point/angles.py",
+    "g3point/wolman.py",
+    "compare_python_matlab.py",
+    "debug_compare_matrices.py",
+    "debug_comparison_with_matlab.py",
+    "g3point_fast.py",
+    "g3point_fast_up_to_cluster.py",
+    "plot_ellipsoid.py",
+    "script_g3point.py",
+    "test_g3point.py",
+    "test_vec2rot.py",
+]
+line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# The package __init__ re-exports the public API; the imports are intentional, not unused.
+"g3point/__init__.py" = ["F401"]

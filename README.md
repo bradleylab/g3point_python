@@ -18,7 +18,40 @@ This algorithm relies on 3 main phases:
 2. Grain **merging and cleaning**
 3. Grain **fitting by geometrical models** including ellipsoids and cuboids
 
-## HOWTO
+## Install
+
+```
+pip install -e .            # from a clone; add ".[test]" for the test/lint extras
+```
+
+This installs the `g3point` package and a `g3point` command-line entry point.
+
+## Command line
+
+Run the full pipeline (denoise → segment → cluster → clean → per-grain ellipsoid fit) on a
+point cloud and print the b-axis grain-size distribution:
+
+```
+g3point CLOUD.ply CONFIG.ini                 # prints grain count + D16/D50/D84
+g3point CLOUD.ply CONFIG.ini --json          # machine-readable result + run provenance
+g3point CLOUD.ply CONFIG.ini --save          # also write labelled _G3POINT.laz outputs
+```
+
+The `matlab_dbscan` merge mode is the default and is the path verified against the MATLAB
+reference (see `PARITY.md`). An example cloud + config lives in `data/`.
+
+## Tests
+
+```
+pytest                                       # MATLAB-free unit suite (runs anywhere)
+```
+
+The `tests/test_unit.py` suite validates the correctness fixes and class contract on synthetic
+inputs and the committed example cloud. `tests/test_stage_parity.py` compares each pipeline
+stage against a MATLAB fixture oracle; those fixtures embed field data and are provided
+out-of-band, so that module auto-skips unless `G3_FIXTURE_DIR` points at a local fixture set.
+
+## HOWTO (library)
 
 First you have to import the ```g3point``` module.  
 **Note:** it's up to you to configure correctly the python path for your 

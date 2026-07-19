@@ -192,7 +192,7 @@ def merge_cpp(labels, stacks, condition, condition_flag=None):
 def cluster(xyz, params, neighbors_indexes, labels, stacks, ndon, sink_indexes, surface, normals,
             version='cpp', condition_flag=None):
 
-    print(f'[cluster_labels]')
+    print('[cluster_labels]')
     nlabels = len(np.unique(labels))
     nlabels_start = nlabels
 
