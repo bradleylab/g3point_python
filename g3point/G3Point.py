@@ -10,7 +10,7 @@ from .cluster import clean_labels, cluster
 from .denoise import statistical_outlier_removal
 from .detrend import orient_normals, rotate_point_cloud_plane
 from .G3PointParameters import G3PointParameters
-from .grains import SUPPORTED_FIT_METHODS, compute_grains, grain_size_distribution
+from .grains import SUPPORTED_FIT_METHODS, RunResult, compute_grains, grain_size_distribution
 from .segment import segment_labels
 from .tools import load_data, save_data_with_colors
 
@@ -108,7 +108,19 @@ class G3Point:
         # Grain fitting
         self.grains = None
         self.g3point_results = None
-        self.provenance = None  # run-level provenance (denoise + RNG), set by compute_grains
+        self.provenance = None  # run-level provenance, assembled by compute_grains
+
+        # ACTUAL per-stage execution facts (not configured values), so provenance can never claim a
+        # stage ran when it did not. Seeded with load-time facts; each stage appends what it did.
+        self._stage_record = {
+            "remove_mins": bool(self.remove_mins),
+            "n_source_points": int(len(self.source_indexes)),  # after invalid-point removal
+            "denoise_applied": False,
+            "denoise_n_removed": 0,
+            "n_points_analysis": int(len(self.xyz)),
+            "merge_version": None,
+            "clean_applied": False,
+        }
 
     # --- pipeline ---------------------------------------------------------------------------
     def _invalidate_grains(self):
@@ -129,12 +141,18 @@ class G3Point:
         self.neighbors_indexes = self.surface = self.normals = None
         self.labels = self.stacks = self.sink_indexes = None
         self._invalidate_grains()
+        self._stage_record.update(denoise_applied=False, denoise_n_removed=0,
+                                  n_points_analysis=int(len(self.xyz)))
         if not getattr(self.params, "denoise", 0):
             return
         kept_xyz, kept = statistical_outlier_removal(
             self.xyz, self.params.denoise_n_neighbors, self.params.denoise_std_ratio)
         self.xyz = kept_xyz
         self.source_indexes = self.source_indexes[kept]  # preserve the map to the loaded file
+        self._stage_record.update(
+            denoise_applied=True,
+            denoise_n_removed=int(len(self._xyz0) - len(kept_xyz)),
+            n_points_analysis=int(len(self.xyz)))
 
     def initial_segmentation(self):
         # Neighbours / surface / normals on the ANALYSIS frame (MATLAB uses ptCloud.Location).
@@ -183,6 +201,7 @@ class G3Point:
                       self.initial_stacks, self.ndon, self.initial_sink_indexes, self.surface,
                       self.normals, version=version, condition_flag=condition_flag)
         self.labels, self.stacks, self.sink_indexes = res
+        self._stage_record["merge_version"] = version
         self._invalidate_grains()
 
     def clean(self, version="cpp", condition_flag=None):
@@ -190,42 +209,58 @@ class G3Point:
                            self.stacks, self.ndon, self.normals,
                            version=version, condition_flag=condition_flag)
         self.labels, self.stacks, self.sink_indexes = res
+        self._stage_record.update(clean_applied=True, merge_version=version)
         self._invalidate_grains()
 
     def run(self, version="matlab_dbscan", run_seed=42):
         """Canonical MATLAB-compatible workflow: denoise -> segment -> cluster -> clean -> grains.
 
         Uses the verified `matlab_dbscan` merge mode (not the `cpp` method default) and honours
-        `params.clean`. Returns the per-grain result table.
+        `params.clean`. Returns an immutable ``RunResult(grains, provenance)``; the grains are also
+        cached on ``self.grains`` and the provenance on ``self.provenance``.
         """
         self.denoise()
         self.initial_segmentation()
         self.cluster(version=version)
         if self.params.clean:
             self.clean(version=version)
-        return self.compute_grains(run_seed=run_seed)
+        self.compute_grains(run_seed=run_seed)
+        return RunResult(grains=self.grains, provenance=self.provenance)
+
+    def _parameters_snapshot(self) -> dict:
+        """The analysis-affecting parameters actually used, for the provenance record."""
+        p = self.params
+        keys = ("knn", "rad_factor", "max_angle1", "max_angle2", "min_flatness", "n_min",
+                "res", "n_scale", "min_scale", "max_scale", "rot_detrend", "denoise", "clean",
+                "fit_method", "a_quality_thresh", "min_diam", "n_axis",
+                "denoise_n_neighbors", "denoise_std_ratio")
+        return {k: getattr(p, k) for k in keys if hasattr(p, k)}
 
     # --- grains -----------------------------------------------------------------------------
     def compute_grains(self, run_seed=42):
         """Fit ellipsoids + Acover to every grain -> typed per-grain table (self.grains).
 
-        Also records run-level provenance (denoise backend/params, Acover RNG algorithm, seed,
-        and sample count) so a result can never silently reflect a changed default.
+        Assembles the run provenance from the ACTUAL per-stage record (what ran, not what was
+        configured) plus grain counts and the parameter snapshot, so a result is identifiable and
+        cannot silently reflect a different merge mode or a skipped stage.
         """
         self.grains = compute_grains(
             self.xyz, self.stacks, self.source_indexes,
             fit_method=self.params.fit_method, a_quality_thresh=self.params.a_quality_thresh,
             run_seed=run_seed)
+        n_fit = sum(1 for g in self.grains if g.fitok)
+        n_gsd = sum(1 for g in self.grains if g.fitok and g.aqualityok)
         self.provenance = {
+            "engine": "bradleylab/g3point_python",
+            **self._stage_record,  # remove_mins, point counts, denoise_applied/_removed, merge_version, clean_applied
+            "n_grains_total": len(self.grains),
+            "n_grains_fit": int(n_fit),
+            "n_grains_in_gsd": int(n_gsd),
             "denoise_backend": "statistical_outlier_removal",
-            "denoise_enabled": bool(getattr(self.params, "denoise", 0)),
-            "denoise_n_neighbors": self.params.denoise_n_neighbors,
-            "denoise_std_ratio": self.params.denoise_std_ratio,
-            "fit_method": self.params.fit_method,
             "acover_rng": "numpy.random.default_rng (PCG64)",
             "acover_run_seed": run_seed,
             "acover_n_samples": ACOVER_N_SAMPLES,
-            "a_quality_thresh": self.params.a_quality_thresh,
+            "parameters": self._parameters_snapshot(),
         }
         return self.grains
 

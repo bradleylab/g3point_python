@@ -68,10 +68,15 @@ section).
 ```python
 import g3point
 g = g3point.G3Point(cloud, ini)                 # cloud = .ply/.laz, ini = parameter file
-grains = g.run(version="matlab_dbscan")          # denoise -> segment -> cluster -> clean -> fit
+result = g.run(version="matlab_dbscan")          # denoise -> segment -> cluster -> clean -> fit
+result.grains                                     # typed per-grain table (GrainResult list)
+result.provenance                                 # what actually ran (merge mode, counts, params)
 gsd = g.grain_size_distribution()                 # b-axis diameters (m), fitok & aqualityok grains
 out, out_sinks = g.save()                         # optional: write labelled point clouds
 ```
+
+`run()` returns an immutable `RunResult(grains, provenance)`; the grains are also cached on
+`g.grains`.
 
 `run()` is the verified MATLAB-parity path (`version="matlab_dbscan"`). It runs `denoise()`
 (if the config enables it), `initial_segmentation()`, `cluster()`, `clean()`, and the per-grain

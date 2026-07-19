@@ -266,6 +266,15 @@ def test_acover_seeded_is_reproducible():
         acover(pts, center, radii, rotation, rng=rng_b)
 
 
+def test_run_result_is_immutable():
+    import dataclasses
+    from g3point.grains import RunResult
+    r = RunResult(grains=[], provenance={"merge_version": "matlab_dbscan"})
+    assert r.provenance["merge_version"] == "matlab_dbscan"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.grains = [1]                                   # frozen: cannot rebind fields
+
+
 def test_grain_rng_depends_only_on_min_index_and_seed():
     from g3point.quality import grain_rng
     a = grain_rng(42, np.array([7, 3, 9])).random(5)     # min index 3
@@ -329,7 +338,8 @@ def _otira_ini(tmp_path) -> str:
 def test_otira_end_to_end_and_frame_separation(tmp_path):
     from g3point import G3Point
     g = G3Point(str(DATA / "Otira_1cm_grains.ply"), _otira_ini(tmp_path), remove_mins=True)
-    grains = g.run(version="matlab_dbscan", run_seed=42)
+    result = g.run(version="matlab_dbscan", run_seed=42)
+    grains = result.grains
 
     assert len(grains) > 0
     assert any(gr.fitok for gr in grains)
@@ -341,6 +351,13 @@ def test_otira_end_to_end_and_frame_separation(tmp_path):
     assert (g.xyz >= -1e-9).all()
     # source_indexes map every analysis-cloud row back to a loaded-file row.
     assert g.source_indexes.shape[0] == g.xyz.shape[0]
-    # provenance records the denoise + RNG settings so a result can't silently drift.
-    assert g.provenance["denoise_backend"] == "statistical_outlier_removal"
-    assert g.provenance["acover_run_seed"] == 42
+    # provenance records ACTUAL execution, not just configured values (identifies the result).
+    prov = result.provenance
+    assert prov["denoise_backend"] == "statistical_outlier_removal"
+    assert prov["acover_run_seed"] == 42
+    assert prov["merge_version"] == "matlab_dbscan"      # the mode that actually ran
+    assert prov["denoise_applied"] is True               # ini sets denoise=1
+    assert prov["clean_applied"] is True                 # ini sets clean=1
+    assert prov["n_points_analysis"] == g.xyz.shape[0]
+    assert prov["n_grains_in_gsd"] == len(g.grain_size_distribution())
+    assert prov["parameters"]["knn"] == 20

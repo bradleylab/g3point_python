@@ -4,6 +4,6 @@ from .cluster import clean_labels as clean
 from .ellipsoid import fit_ellipsoid_to_grain
 from .quality import acover, aquality_ok, sample_ellipsoid_surface, grain_rng
 from .denoise import statistical_outlier_removal
-from .grains import GrainResult, compute_grains, grain_size_distribution, percentiles
+from .grains import GrainResult, RunResult, compute_grains, grain_size_distribution, percentiles
 from .G3Point import G3Point
 from .G3PointParameters import G3PointParameters

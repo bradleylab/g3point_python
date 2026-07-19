@@ -25,6 +25,18 @@ MIN_POINTS_FOR_FIT = 4  # an ellipsoid fit needs at least this many points
 SUPPORTED_FIT_METHODS = {"direct", "inertia"}  # methods fit_ellipsoid_to_grain implements
 
 
+@dataclass(frozen=True)
+class RunResult:
+    """Immutable result of ``G3Point.run()``: the per-grain table plus the run provenance.
+
+    ``provenance`` records what ACTUALLY executed (merge mode, whether denoise/clean ran, point
+    counts, the full parameter snapshot), so a result can be identified and never silently claims a
+    stage ran when it did not.
+    """
+    grains: list  # list[GrainResult]
+    provenance: dict
+
+
 @dataclass
 class GrainResult:
     label: int

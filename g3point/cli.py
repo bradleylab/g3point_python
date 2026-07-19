@@ -38,10 +38,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     g = G3Point(args.cloud, args.ini, remove_mins=not args.no_min_shift)
-    g.run(version=args.version, run_seed=args.seed)
+    result = g.run(version=args.version, run_seed=args.seed)
     gsd = g.grain_size_distribution()
 
-    n_grains = sum(1 for grain in g.grains if grain.fitok)
+    n_grains = sum(1 for grain in result.grains if grain.fitok)
     n_kept = len(gsd)
     pct = percentiles(gsd)
 
@@ -49,13 +49,13 @@ def main(argv: list[str] | None = None) -> int:
         g.save()
 
     if args.json:
-        result = {
+        payload = {
             "n_grains_fit": n_grains,
             "n_grains_in_gsd": n_kept,
             "percentiles_m": pct,
-            "provenance": g.provenance,
+            "provenance": result.provenance,
         }
-        json.dump(result, sys.stdout, indent=2, default=float)
+        json.dump(payload, sys.stdout, indent=2, default=float)
         sys.stdout.write("\n")
     else:
         print(f"grains fit: {n_grains}   in GSD (fitok & aqualityok): {n_kept}")
