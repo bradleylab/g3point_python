@@ -109,7 +109,16 @@ def segment_labels(xyz, knn, neighbors_indexes, braun_willett=True):
     dx = x - np.squeeze(x[neighbors_indexes])  # squeeze removes axis of length 1
     dy = y - np.squeeze(y[neighbors_indexes])
     dz = z - np.squeeze(z[neighbors_indexes])
-    slopes = dz / (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5  # compute the slopes between a point and its neighbors
+    with np.errstate(invalid="ignore", divide="ignore"):
+        slopes = dz / (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5  # slope between a point and each neighbour
+
+    # A COINCIDENT neighbour (distance 0, from float32-quantised tiles collapsing near-identical
+    # points) gives an undefined 0/0 slope. MATLAB's min/max ignore NaN; numpy's propagate it,
+    # which corrupts the catchment graph and leaves some points in no stack -> "stacks are not
+    # coherent". Treat an undefined slope as +inf: it is never chosen as the downslope receiver and
+    # never a spurious downhill, so the reduction matches MATLAB's NaN-ignoring behaviour. (No-op on
+    # tiles without coincident points -> segmentation ARI stays 1.0 on the parity fixtures.)
+    slopes = np.where(np.isfinite(slopes), slopes, np.inf)
 
     # for each point, find in the neighborhood the point with the minimum slope (the receiver)
     index_of_min_slope = np.argmin(slopes, axis=1)  # get the index of the point with the minimum slope

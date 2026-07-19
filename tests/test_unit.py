@@ -206,6 +206,21 @@ def test_add_to_stack_matches_recursion_order():
     assert got == [0, 1, 3, 2, 4, 5]
 
 
+def test_segment_handles_coincident_points():
+    # float32-quantised tiles can contain coincident points (zero-distance neighbours -> 0/0 slope).
+    # Segmentation must stay coherent (every point in exactly one stack), not crash on the NaN.
+    from scipy.spatial import KDTree
+    from g3point.segment import segment_labels
+    rng = np.random.default_rng(0)
+    xyz = rng.random((60, 3))
+    xyz[11] = xyz[10]                      # exact duplicate
+    knn = 6
+    _, nbr = KDTree(xyz).query(xyz, knn + 1)
+    labels, stacks, _ndon, _lmax = segment_labels(xyz, knn, nbr[:, 1:])   # must not raise
+    assert len(labels) == 60
+    assert sorted(int(i) for s in stacks for i in s) == list(range(60))    # coherent partition
+
+
 def test_add_to_stack_bw_deep_chain_no_recursion_error():
     from g3point.segment import add_to_stack_bw
     # a single catchment 6000 points deep -- a recursive builder would blow the ~1000 call-stack
